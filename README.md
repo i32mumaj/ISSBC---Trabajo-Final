@@ -1,6 +1,3 @@
-Aquí tienes el README actualizado con la sección de instalación añadida al final:
-
-```markdown
 # Sistema de Diagnóstico Legal (ISSBC – Parcial)
 
 > Nota: Esta entrega se centra en la **vista (UI)** como parte del examen de la asignatura ISSBC. La lógica de negocio está simulada y pendiente de completar.
@@ -43,7 +40,6 @@ Aquí tienes el README actualizado con la sección de instalación añadida al f
 - La lógica (LLM, evaluación real, diagnóstico) no está implementada; esta versión es principalmente la interfaz gráfica del parcial.
 
 ## Ejecución rápida
-
 ```bash
 python -m venv .venv
 ./.venv/Scripts/activate  # Windows
@@ -56,7 +52,6 @@ python main.py
 ### 1. Crear el entorno virtual
 
 Abre la terminal en la carpeta raíz del proyecto y ejecuta:
-
 ```bash
 python -m venv .venv
 ```
@@ -72,7 +67,6 @@ Ejecuta el comando correspondiente a tu sistema operativo:
 ### 3. Instalar las dependencias
 
 Instala la librería de la interfaz gráfica y el motor para leer los PDFs:
-
 ```bash
 pip install PyQt6 PyMuPDF
 ```
@@ -80,8 +74,6 @@ pip install PyQt6 PyMuPDF
 ### 4. Ejecutar el programa
 
 Lanza el archivo principal de la aplicación:
-
 ```bash
 python main.py
-```
 ```
