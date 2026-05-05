@@ -25,7 +25,7 @@ class Controller:
 
         data = {
             "symptoms": self.model.symptoms,
-            "mode": self.model.mode
+            "mode": self.model.mode,
         }
 
         self.model.hypotheses = self.llm.get_hypotheses(data)
@@ -34,10 +34,15 @@ class Controller:
     def diagnose(self):
         result = self.llm.get_diagnosis(self.model)
 
-        self.model.diagnosis = result["diagnosis"]
-        self.model.justification = result["justification"]
+        self.model.diagnosis = result
+        self.model.justification = result.get("justification", result.get("summary", ""))
 
-        self.view.show_diagnosis(self.model.diagnosis)
+        self.model.history.insert(0, {
+            "label": result.get("diagnosis", "Análisis"),
+            "severity": result.get("severity", "medium"),
+        })
+
+        self.view.show_diagnosis(result)
 
     def show_justification(self):
         self.view.show_justification(self.model.justification)
@@ -47,7 +52,7 @@ class Controller:
             self.view,
             "Seleccionar PDFs",
             "",
-            "PDF Files (*.pdf)"
+            "PDF Files (*.pdf)",
         )
 
         if files:

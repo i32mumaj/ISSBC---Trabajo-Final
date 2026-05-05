@@ -4,10 +4,12 @@ class Model:
         self.observables = {}
 
         self.hypotheses = []
-        self.diagnosis = ""
-        self.justification = ""
+        self.diagnosis = {}
+        self.justification = []
 
         self.pdfs = []
         self.web_sources = []
+
+        self.history = []
 
         self.mode = "LOCAL"
