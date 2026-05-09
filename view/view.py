@@ -512,14 +512,14 @@ class CitationRow(QFrame):
         lay.setContentsMargins(0, 0, 0, 0)
         lay.setSpacing(6)
 
-        doc_name = citation.get("doc", citation.get("label", citation.get("name", "")))
-        name_lbl = QLabel(doc_name)
-        name_lbl.setStyleSheet(
+        self._full_name = citation.get("doc", citation.get("label", citation.get("name", "")))
+        self._name_lbl = QLabel(self._full_name)
+        self._name_lbl.setStyleSheet(
             f"font-size: 11px; color: {theme['accent_text']}; background: transparent;"
         )
-        name_lbl.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
-        name_lbl.setMinimumWidth(0)
-        lay.addWidget(name_lbl, 1)
+        self._name_lbl.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        self._name_lbl.setMinimumWidth(0)
+        lay.addWidget(self._name_lbl, 1)
 
         page = citation.get("page")
         if page is not None:
@@ -527,6 +527,12 @@ class CitationRow(QFrame):
             page_lbl.setObjectName("mono")
             page_lbl.setFixedWidth(28)
             lay.addWidget(page_lbl)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        fm = self._name_lbl.fontMetrics()
+        elided = fm.elidedText(self._full_name, Qt.TextElideMode.ElideRight, self._name_lbl.width())
+        self._name_lbl.setText(elided)
 
 
 class TimelineStep(QFrame):
@@ -765,7 +771,7 @@ class ResultsPane(QWidget):
         self._hypotheses_data = []
 
         outer = QVBoxLayout(self)
-        outer.setContentsMargins(0, 0, 20, 0)
+        outer.setContentsMargins(0, 0, 0, 0)
         outer.setSpacing(0)
 
         self._scroll = QScrollArea()
@@ -925,7 +931,7 @@ class ResultsPane(QWidget):
         pct = int(avg * 100)
         t = self._theme
         color = t["success"] if pct >= 70 else t["warn"] if pct >= 40 else t["danger"]
-        self._confidence_lbl.setText(f"confianza {pct}%")
+        self._confidence_lbl.setText(f"{pct}% conf.")
         self._confidence_lbl.setStyleSheet(
             f"font-size: 10px; color: {color}; background: transparent;"
         )
