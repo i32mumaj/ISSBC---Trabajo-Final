@@ -2,12 +2,13 @@ from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
     QListWidget, QLabel, QTextEdit, QFileDialog, QDialog, QFrame, QSizePolicy,
     QListWidgetItem, QStackedWidget, QSplitter, QScrollArea, QProgressBar,
-    QScrollBar, QShortcut, QLineEdit, QAbstractScrollArea
+    QScrollBar, QLineEdit, QAbstractScrollArea
 )
+from datetime import date as _date
 from PyQt6.QtCore import Qt, QTimer, QPropertyAnimation, QEasingCurve, QRect
 from PyQt6.QtGui import (
     QFont, QImage, QPixmap, QGuiApplication, QIcon, QPainter, QColor,
-    QKeySequence, QPen, QPainterPath
+    QKeySequence, QPen, QPainterPath, QShortcut
 )
 
 try:
@@ -212,6 +213,16 @@ def get_stylesheet(theme):
             border: 1px solid {theme['border']};
             border-radius: 8px;
         }}
+        QFrame#chat_user_bg {{
+            background-color: {theme['accent_soft']};
+            border: 1px solid {theme['border']};
+            border-radius: 8px;
+        }}
+        QFrame#chat_assistant_bg {{
+            background-color: {theme['surface2']};
+            border: 1px solid {theme['border']};
+            border-radius: 8px;
+        }}
         QFrame#drawer_panel {{
             background-color: {theme['canvas']};
             border-left: 1px solid {theme['border']};
@@ -258,6 +269,25 @@ def get_stylesheet(theme):
         QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {{
             border: none; background: none; width: 0;
         }}
+        QTabWidget::pane {{
+            border: none;
+        }}
+        QTabBar::tab {{
+            background: {theme['surface2']};
+            color: {theme['text_muted']};
+            border: none;
+            padding: 6px 14px;
+            font-size: 12px;
+        }}
+        QTabBar::tab:selected {{
+            background: {theme['canvas']};
+            color: {theme['text']};
+            font-weight: 600;
+            border-bottom: 2px solid {theme['accent']};
+        }}
+        QTabBar::tab:hover:!selected {{
+            background: {theme['border']};
+        }}
         QStatusBar {{
             background-color: {theme['canvas']};
             border-top: 1px solid {theme['border']};
@@ -274,6 +304,21 @@ def get_stylesheet(theme):
             font-size: 12px;
         }}
     """
+
+
+def build_app_icon():
+    pix = QPixmap(64, 64)
+    pix.fill(Qt.GlobalColor.transparent)
+    p = QPainter(pix)
+    p.setRenderHint(QPainter.RenderHint.Antialiasing)
+    path = QPainterPath()
+    path.addRoundedRect(2, 2, 60, 60, 14, 14)
+    p.fillPath(path, QColor("#3b7dd8"))
+    p.setPen(QColor("#ffffff"))
+    p.setFont(QFont("Segoe UI", 26, QFont.Weight.Bold))
+    p.drawText(pix.rect(), Qt.AlignmentFlag.AlignCenter, "§")
+    p.end()
+    return QIcon(pix)
 
 
 def build_pdf_icon():
@@ -369,105 +414,73 @@ class SeverityMeter(QWidget):
 
 
 class HypothesisRow(QFrame):
-    """Single hypothesis: dot + name + score bar + percent."""
+    """Compact single-line hypothesis row."""
 
     def __init__(self, hyp, theme, parent=None):
         super().__init__(parent)
-        self.setObjectName("card")
-        lay = QVBoxLayout(self)
-        lay.setContentsMargins(10, 8, 10, 8)
-        lay.setSpacing(6)
+        self.setFixedHeight(28)
+        lay = QHBoxLayout(self)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(8)
 
-        top = QHBoxLayout()
-        top.setSpacing(8)
         c = severity_color(theme, hyp.get("severity", "medium"))
+        pct = int(hyp.get("score", 0) * 100)
 
-        dot = QLabel()
-        dot.setFixedSize(7, 7)
-        dot.setStyleSheet(f"background-color: {c}; border-radius: 3px;")
-        top.addWidget(dot)
+        dot = QLabel("●")
+        dot.setFixedWidth(10)
+        dot.setStyleSheet(f"color: {c}; font-size: 7px; background: transparent;")
+        lay.addWidget(dot)
 
         name_lbl = QLabel(hyp.get("name", ""))
-        name_lbl.setStyleSheet(f"font-size: 12px; font-weight: 500; color: {theme['text']};")
-        name_lbl.setWordWrap(True)
-        top.addWidget(name_lbl, 1)
+        name_lbl.setStyleSheet(f"font-size: 11.5px; font-weight: 500; background: transparent;")
+        name_lbl.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        name_lbl.setMinimumWidth(0)
+        lay.addWidget(name_lbl, 1)
 
-        pct = int(hyp.get("score", 0) * 100)
+        # Mini progress bar
+        bar_bg = QFrame()
+        bar_bg.setFixedSize(44, 4)
+        bar_bg.setStyleSheet(f"background-color: {theme['border']}; border-radius: 2px;")
+        bar_fill = QFrame(bar_bg)
+        bar_fill.setFixedHeight(4)
+        bar_fill.setStyleSheet(f"background-color: {c}; border-radius: 2px;")
+        bar_fill.setFixedWidth(max(0, int(44 * pct / 100)))
+        lay.addWidget(bar_bg)
+
         score_lbl = QLabel(f"{pct}%")
+        score_lbl.setFixedWidth(30)
+        score_lbl.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         score_lbl.setStyleSheet(
-            f"color: {c}; font-size: 11px; font-weight: 600;"
+            f"color: {c}; font-size: 10.5px; font-weight: 600; background: transparent;"
             f" font-family: 'JetBrains Mono', 'Consolas', monospace;"
         )
-        top.addWidget(score_lbl)
-        lay.addLayout(top)
-
-        bar_bg = QFrame()
-        bar_bg.setFixedHeight(3)
-        bar_bg.setStyleSheet(f"background-color: {theme['border']}; border-radius: 2px;")
-        bar_outer = QHBoxLayout(bar_bg)
-        bar_outer.setContentsMargins(0, 0, 0, 0)
-        bar_outer.setSpacing(0)
-
-        fill_w = max(0, min(100, pct))
-        if fill_w > 0:
-            bar_fill = QFrame()
-            bar_fill.setFixedHeight(3)
-            bar_fill.setStyleSheet(f"background-color: {c}; border-radius: 2px;")
-            bar_fill.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
-            bar_outer.addWidget(bar_fill)
-            bar_outer.addStretch()
-            bar_fill.setFixedWidth(0)
-            bar_bg._fill = bar_fill
-            bar_bg._pct = fill_w
-        lay.addWidget(bar_bg)
-        self._bar_bg = bar_bg
-
-        if hyp.get("detail"):
-            detail_lbl = QLabel(hyp["detail"])
-            detail_lbl.setStyleSheet(f"font-size: 11.5px; color: {theme['text_muted']};")
-            detail_lbl.setWordWrap(True)
-            lay.addWidget(detail_lbl)
-
-    def showEvent(self, event):
-        super().showEvent(event)
-        bar = self._bar_bg
-        if hasattr(bar, "_fill") and hasattr(bar, "_pct"):
-            fill_w = int(bar.width() * bar._pct / 100)
-            bar._fill.setFixedWidth(max(0, fill_w))
-
-    def resizeEvent(self, event):
-        super().resizeEvent(event)
-        bar = self._bar_bg
-        if hasattr(bar, "_fill") and hasattr(bar, "_pct"):
-            fill_w = int(bar.width() * bar._pct / 100)
-            bar._fill.setFixedWidth(max(0, fill_w))
+        lay.addWidget(score_lbl)
 
 
 class CitationRow(QFrame):
-    """Single PDF citation row."""
+    """Compact single-line citation row."""
 
     def __init__(self, citation, theme, parent=None):
         super().__init__(parent)
-        self.setObjectName("card")
+        self.setFixedHeight(26)
         lay = QHBoxLayout(self)
-        lay.setContentsMargins(8, 6, 8, 6)
-        lay.setSpacing(8)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(6)
 
-        icon_lbl = QLabel("⬜")
-        icon_lbl.setFixedWidth(14)
-        icon_lbl.setStyleSheet(f"color: {theme['danger']}; font-size: 12px;")
-        lay.addWidget(icon_lbl)
-
-        name_lbl = QLabel(citation.get("label", citation.get("name", "")))
-        name_lbl.setStyleSheet(f"font-size: 12px; color: {theme['text']};")
+        doc_name = citation.get("doc", citation.get("label", citation.get("name", "")))
+        name_lbl = QLabel(doc_name)
+        name_lbl.setStyleSheet(
+            f"font-size: 11px; color: {theme['accent_text']}; background: transparent;"
+        )
         name_lbl.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         name_lbl.setMinimumWidth(0)
         lay.addWidget(name_lbl, 1)
 
         page = citation.get("page")
         if page is not None:
-            page_lbl = QLabel(f"p. {page}")
+            page_lbl = QLabel(f"p.{page}")
             page_lbl.setObjectName("mono")
+            page_lbl.setFixedWidth(28)
             lay.addWidget(page_lbl)
 
 
@@ -539,13 +552,10 @@ class BackdropWidget(QWidget):
         self.hide()
 
     def paintEvent(self, event):
-        p = QPainter(self)
-        p.fillRect(self.rect(), QColor(8, 12, 18, 90))
-        p.end()
+        pass
 
     def mousePressEvent(self, event):
-        self.close_requested.emit() if hasattr(self, '_close_cb') else None
-        if self._close_cb:
+        if hasattr(self, '_close_cb') and self._close_cb:
             self._close_cb()
 
     def set_close_callback(self, cb):
@@ -708,13 +718,15 @@ class ResultsPane(QWidget):
         self._on_export = None
 
         outer = QVBoxLayout(self)
-        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setContentsMargins(0, 0, 20, 0)
         outer.setSpacing(0)
 
         self._scroll = QScrollArea()
         self._scroll.setWidgetResizable(True)
         self._scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self._scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self._container = QWidget()
+        self._container.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Maximum)
         self._lay = QVBoxLayout(self._container)
         self._lay.setContentsMargins(0, 0, 0, 0)
         self._lay.setSpacing(0)
@@ -734,7 +746,7 @@ class ResultsPane(QWidget):
             "QFrame#card { border-radius: 0; border-left: none; border-right: none; border-top: none; }"
         )
         sh_lay = QVBoxLayout(self._severity_header)
-        sh_lay.setContentsMargins(14, 14, 14, 14)
+        sh_lay.setContentsMargins(16, 14, 24, 14)
         sh_lay.setSpacing(8)
 
         top_row = QHBoxLayout()
@@ -746,20 +758,14 @@ class ResultsPane(QWidget):
         top_row.addStretch()
         sh_lay.addLayout(top_row)
 
-        self._diag_title = QLabel("Sin diagnóstico aún")
-        self._diag_title.setStyleSheet("font-size: 14px; font-weight: 600; line-height: 1.3;")
+        self._diag_title = QLabel("Sin análisis aún")
+        self._diag_title.setStyleSheet("font-size: 13px; font-weight: 600;")
         self._diag_title.setWordWrap(True)
+        self._diag_title.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         sh_lay.addWidget(self._diag_title)
 
         self._severity_meter = SeverityMeter()
         sh_lay.addWidget(self._severity_meter)
-
-        self._diag_summary = QLabel(
-            "Ejecuta 'Evaluar hipótesis' o 'Diagnosticar' para ver los resultados aquí."
-        )
-        self._diag_summary.setStyleSheet(f"font-size: 12px; color: {t['text_muted']}; line-height: 1.5;")
-        self._diag_summary.setWordWrap(True)
-        sh_lay.addWidget(self._diag_summary)
 
         btn_row = QHBoxLayout()
         btn_row.setSpacing(6)
@@ -779,7 +785,7 @@ class ResultsPane(QWidget):
         # Hypotheses section
         self._hyp_section = QFrame()
         hyp_lay = QVBoxLayout(self._hyp_section)
-        hyp_lay.setContentsMargins(14, 12, 14, 4)
+        hyp_lay.setContentsMargins(16, 12, 24, 4)
         hyp_lay.setSpacing(8)
 
         hyp_header = QLabel("HIPÓTESIS")
@@ -798,7 +804,7 @@ class ResultsPane(QWidget):
         # Citations section
         self._cit_section = QFrame()
         cit_lay = QVBoxLayout(self._cit_section)
-        cit_lay.setContentsMargins(14, 4, 14, 14)
+        cit_lay.setContentsMargins(16, 4, 24, 14)
         cit_lay.setSpacing(6)
 
         self._cit_header = QLabel("CITAS")
@@ -818,11 +824,11 @@ class ResultsPane(QWidget):
     def set_on_justify(self, cb):
         self._on_justify = cb
 
+    def set_on_export(self, cb):
+        self._export_btn.clicked.connect(cb)
+
     def update_theme(self, theme):
         self._theme = theme
-        self._diag_summary.setStyleSheet(
-            f"font-size: 12px; color: {theme['text_muted']}; line-height: 1.5;"
-        )
         if self._severity:
             self._pill.set_severity(self._severity, theme)
             self._severity_meter.set_severity(self._severity, theme)
@@ -852,11 +858,11 @@ class ResultsPane(QWidget):
         severity = diagnosis_data.get("severity", "medium")
         self._severity = severity
         self._pill.set_severity(severity, t)
-        self._date_lbl.setText("14 mar · 18:42")
+        today = _date.today()
+        months = ["ene","feb","mar","abr","may","jun","jul","ago","sep","oct","nov","dic"]
+        self._date_lbl.setText(f"{today.day} {months[today.month-1]}")
         self._diag_title.setText(diagnosis_data.get("diagnosis", diagnosis_data.get("title", "")))
         self._severity_meter.set_severity(severity, t)
-        summary = diagnosis_data.get("summary", diagnosis_data.get("justification", ""))
-        self._diag_summary.setText(summary[:300] + "…" if len(summary) > 300 else summary)
 
         citations = diagnosis_data.get("citations", [])
         while self._cit_rows_lay.count():
@@ -873,106 +879,174 @@ class ResultsPane(QWidget):
             self._cit_placeholder.show()
 
 
-class TimelineWidget(QFrame):
-    """Animated analysis timeline shown in the center pane."""
+class ProcessingWidget(QFrame):
+    """Status bar shown below the chat during analysis."""
+
+    _DOTS = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
 
     def __init__(self, theme, parent=None):
         super().__init__(parent)
         self.setObjectName("timeline_box")
         self._theme = theme
-        self._active_idx = len(TIMELINE_STEPS)
-        self._timer = None
-        self._step_idx = 0
-        self._step_ms = list(TIMELINE_STEP_MS)
         self._on_done = None
+        self._dot_idx = 0
+        self._dot_timer = QTimer()
+        self._dot_timer.timeout.connect(self._tick)
 
-        outer = QVBoxLayout(self)
-        outer.setContentsMargins(12, 10, 12, 10)
-        outer.setSpacing(8)
+        outer = QHBoxLayout(self)
+        outer.setContentsMargins(14, 8, 14, 8)
+        outer.setSpacing(10)
 
-        # Header row
-        header_row = QHBoxLayout()
-        tl_lbl = QLabel("Cronología")
-        tl_lbl.setStyleSheet("font-size: 12px; font-weight: 600;")
-        header_row.addWidget(tl_lbl)
-        header_row.addStretch()
-        self._progress_bar = QProgressBar()
-        self._progress_bar.setFixedWidth(180)
-        self._progress_bar.setFixedHeight(4)
-        self._progress_bar.setTextVisible(False)
-        self._progress_bar.setRange(0, 1000)
-        self._progress_bar.setValue(1000)
-        self._progress_bar.hide()
-        header_row.addWidget(self._progress_bar)
-        self._time_lbl = QLabel(f"Última · {sum(TIMELINE_STEP_MS)}ms")
-        self._time_lbl.setObjectName("mono")
-        header_row.addWidget(self._time_lbl)
-        outer.addLayout(header_row)
+        self._spinner = QLabel(self._DOTS[0])
+        self._spinner.setFixedWidth(16)
+        self._spinner.setStyleSheet("font-size: 13px;")
+        outer.addWidget(self._spinner)
 
-        # Steps
-        self._steps_lay = QVBoxLayout()
-        self._steps_lay.setSpacing(4)
-        outer.addLayout(self._steps_lay)
-        self._render_steps(self._active_idx)
+        self._lbl = QLabel("Listo")
+        self._lbl.setObjectName("mono")
+        outer.addWidget(self._lbl, 1)
 
-    def _render_steps(self, active_idx):
-        lay = self._steps_lay
-        while lay.count():
-            item = lay.takeAt(0)
-            if item.widget():
-                item.widget().deleteLater()
-        for i, (_, label) in enumerate(TIMELINE_STEPS):
-            if i < active_idx:
-                state = "done"
-            elif i == active_idx:
-                state = "running"
-            else:
-                state = "pending"
-            ms = TIMELINE_STEP_MS[i] if state == "done" else None
-            step = TimelineStep(label, state, self._theme, ms)
-            lay.addWidget(step)
+        self._bar = QProgressBar()
+        self._bar.setFixedWidth(120)
+        self._bar.setFixedHeight(4)
+        self._bar.setTextVisible(False)
+        self._bar.setRange(0, 0)
+        self._bar.hide()
+        outer.addWidget(self._bar)
 
     def start_animation(self, on_done=None):
         self._on_done = on_done
-        self._step_idx = 0
-        self._progress_bar.setValue(0)
-        self._progress_bar.show()
-        self._time_lbl.hide()
-        self._render_steps(0)
-        self._schedule_next()
+        self._lbl.setText("Iniciando análisis…")
+        self._bar.show()
+        self._dot_timer.start(80)
+        QTimer.singleShot(200, self._fire)
 
-    def _schedule_next(self):
-        if self._step_idx >= len(TIMELINE_STEPS):
-            self._finish()
-            return
-        ms = self._step_ms[self._step_idx]
-        self._timer = QTimer()
-        self._timer.setSingleShot(True)
-        self._timer.timeout.connect(self._advance)
-        self._timer.start(ms)
-
-    def _advance(self):
-        self._step_idx += 1
-        done_ms = sum(self._step_ms[:self._step_idx])
-        total_ms = sum(self._step_ms)
-        self._progress_bar.setValue(int(done_ms / total_ms * 1000))
-        if self._step_idx >= len(TIMELINE_STEPS):
-            self._finish()
-        else:
-            self._render_steps(self._step_idx)
-            self._schedule_next()
-
-    def _finish(self):
-        self._progress_bar.setValue(1000)
-        self._render_steps(len(TIMELINE_STEPS))
-        self._progress_bar.hide()
-        self._time_lbl.show()
+    def _fire(self):
+        self._lbl.setText("Procesando con IA…  (puede tardar)")
         if self._on_done:
             self._on_done()
 
+    def _tick(self):
+        self._dot_idx = (self._dot_idx + 1) % len(self._DOTS)
+        self._spinner.setText(self._DOTS[self._dot_idx])
+
+    def set_done(self):
+        self._dot_timer.stop()
+        self._spinner.setText("✓")
+        self._lbl.setText("Análisis completado")
+        self._bar.hide()
+
+    def set_idle(self):
+        self._dot_timer.stop()
+        self._spinner.setText("○")
+        self._lbl.setText("Listo")
+        self._bar.hide()
+
     def update_theme(self, theme):
         self._theme = theme
-        self._render_steps(len(TIMELINE_STEPS))
+
+
+class ConversationOverlay(QFrame):
+    """Floating overlay with conversation list, shown over the PDF tray."""
+
+    WIDTH = 280
+
+    def __init__(self, theme, parent=None):
+        super().__init__(parent)
+        self.setObjectName("drawer_panel")
+        self.hide()
+        self._open = False
+        self._new_cb = None
+        self._select_cb = None
+        self._splitter = None
+
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(12, 12, 12, 12)
+        lay.setSpacing(8)
+
+        hdr = QHBoxLayout()
+        title_lbl = QLabel("Conversaciones")
+        title_lbl.setStyleSheet("font-size: 12px; font-weight: 600;")
+        hdr.addWidget(title_lbl)
+        hdr.addStretch()
+        close_btn = QPushButton("✕")
+        close_btn.setObjectName("icon_btn")
+        close_btn.setFixedSize(24, 24)
+        close_btn.clicked.connect(self.hide_overlay)
+        hdr.addWidget(close_btn)
+        lay.addLayout(hdr)
+
+        self._new_btn = QPushButton("＋  Nuevo chat")
+        self._new_btn.setObjectName("primary")
+        self._new_btn.setFixedHeight(30)
+        self._new_btn.clicked.connect(self._on_new)
+        lay.addWidget(self._new_btn)
+
+        self._list = QListWidget()
+        self._list.setFrameShape(QFrame.Shape.NoFrame)
+        self._list.setSpacing(1)
+        self._list.itemClicked.connect(self._on_select)
+        lay.addWidget(self._list, 1)
+
+    def set_splitter(self, splitter):
+        self._splitter = splitter
+
+    def _panel_width(self):
+        if self._splitter:
+            sizes = self._splitter.sizes()
+            if sizes and sizes[0] > 0:
+                return sizes[0]
+        return self.WIDTH
+
+    def show_overlay(self):
+        p = self.parent()
+        if not p:
+            return
+        w = self._panel_width()
+        self.setGeometry(0, 0, w, p.height())
+        self.show()
+        self.raise_()
+        self._open = True
+
+    def hide_overlay(self):
+        self.hide()
+        self._open = False
+
+    def toggle(self):
+        if self._open:
+            self.hide_overlay()
+        else:
+            self.show_overlay()
+
+    def is_open(self):
+        return self._open
+
+    def set_new_callback(self, cb):
+        self._new_cb = cb
+
+    def set_select_callback(self, cb):
+        self._select_cb = cb
+
+    def _on_new(self):
+        if self._new_cb:
+            self._new_cb()
+
+    def _on_select(self, item):
+        if self._select_cb:
+            self._select_cb(item.data(Qt.ItemDataRole.UserRole))
+        self.hide_overlay()
+
+    def update_conversations(self, convs: list):
+        self._list.clear()
+        for c in convs:
+            name = c.get("name", "Sin título")
+            updated = c.get("updated_at", "")[:16].replace("T", " ")
+            item = QListWidgetItem(f"{name}\n{updated}")
+            item.setData(Qt.ItemDataRole.UserRole, c["id"])
+            self._list.addItem(item)
+
+    def update_theme(self, theme):
+        pass
 
 
 class PdfTray(QFrame):
@@ -992,6 +1066,13 @@ class PdfTray(QFrame):
 
         # Section header
         header_row = QHBoxLayout()
+        self._menu_btn = QPushButton("☰")
+        self._menu_btn.setObjectName("icon_btn")
+        self._menu_btn.setFixedSize(26, 26)
+        self._menu_btn.setToolTip("Chats")
+        self._menu_btn.setStyleSheet("font-size: 14px; font-weight: 700;")
+        header_row.addWidget(self._menu_btn)
+        header_row.addSpacing(4)
         lbl = QLabel("DOCUMENTOS")
         lbl.setObjectName("mono")
         header_row.addWidget(lbl)
@@ -1024,29 +1105,34 @@ class PdfTray(QFrame):
 
         self._preview_card = QFrame()
         self._preview_card.setObjectName("card")
+        self._preview_card.setMinimumHeight(220)
         self._preview_card.hide()
         pc_lay = QVBoxLayout(self._preview_card)
-        pc_lay.setContentsMargins(8, 8, 8, 8)
-        pc_lay.setSpacing(4)
+        pc_lay.setContentsMargins(6, 6, 6, 6)
+        pc_lay.setSpacing(5)
+
+        self._prev_img = QLabel()
+        self._prev_img.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._prev_img.setMinimumHeight(160)
+        self._prev_img.setStyleSheet("border-radius: 4px; background: transparent;")
+        pc_lay.addWidget(self._prev_img, 1)
+
         self._prev_name = QLabel()
-        self._prev_name.setStyleSheet("font-size: 11.5px; font-weight: 500;")
-        self._prev_name.setWordWrap(False)
+        self._prev_name.setStyleSheet("font-size: 11px; font-weight: 600;")
+        self._prev_name.setWordWrap(True)
         pc_lay.addWidget(self._prev_name)
         self._prev_meta = QLabel()
         self._prev_meta.setObjectName("mono")
         pc_lay.addWidget(self._prev_meta)
-        self._prev_excerpt = QLabel()
-        self._prev_excerpt.setStyleSheet(
-            f"font-size: 10px; color: {theme['text_muted']}; line-height: 1.4;"
-        )
-        self._prev_excerpt.setWordWrap(True)
-        pc_lay.addWidget(self._prev_excerpt)
-        lay.addWidget(self._preview_card)
+        lay.addWidget(self._preview_card, 1)
 
         self._list.currentItemChanged.connect(self._on_selection_changed)
 
     def set_add_callback(self, cb):
         self._add_cb = cb
+
+    def set_menu_callback(self, cb):
+        self._menu_btn.clicked.connect(cb)
 
     def set_dblclick_callback(self, cb):
         self._pdf_dblclick_cb = cb
@@ -1077,8 +1163,25 @@ class PdfTray(QFrame):
             if size:
                 meta_parts.append(size)
             self._prev_meta.setText(" · ".join(meta_parts) if meta_parts else "")
-            excerpt = pdf.get("excerpt", "")
-            self._prev_excerpt.setText(excerpt[:200] + "…" if len(excerpt) > 200 else excerpt)
+            # Render first page thumbnail
+            self._prev_img.clear()
+            path = pdf.get("path", "")
+            if path and PDF_PREVIEW_AVAILABLE:
+                try:
+                    doc = fitz.open(path)
+                    page = doc.load_page(0)
+                    avail_w = max(180, self.width() - 20)
+                    scale = avail_w / page.rect.width
+                    mat = fitz.Matrix(scale, scale)
+                    pix = page.get_pixmap(matrix=mat, alpha=False)
+                    img = QImage(pix.samples, pix.width, pix.height,
+                                 pix.stride, QImage.Format.Format_RGB888).copy()
+                    doc.close()
+                    pm = QPixmap.fromImage(img)
+                    self._prev_img.setPixmap(pm)
+                    self._prev_img.setFixedHeight(min(pm.height(), 300))
+                except Exception:
+                    self._prev_img.setText("Vista previa no disponible")
             self._preview_card.show()
 
     def update_pdfs(self, pdfs):
@@ -1094,9 +1197,6 @@ class PdfTray(QFrame):
 
     def update_theme(self, theme):
         self._theme = theme
-        self._prev_excerpt.setStyleSheet(
-            f"font-size: 10px; color: {theme['text_muted']}; line-height: 1.4;"
-        )
 
 
 # ── PDF viewer dialog (unchanged from original, restyled) ─────────────────────
@@ -1294,23 +1394,28 @@ class PDFWindow(QDialog):
 # ── Content area with drawer overlay ─────────────────────────────────────────
 
 class ContentArea(QWidget):
-    """Body area that hosts the 3-pane splitter + overlay drawer."""
+    """Body area that hosts the 3-pane splitter + overlay drawers."""
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self._splitter = None
         self._backdrop = None
         self._drawers = []
+        self._conv_overlay = None
 
-    def setup(self, splitter, backdrop, drawers):
+    def setup(self, splitter, backdrop, drawers, conv_overlay=None):
         self._splitter = splitter
         self._backdrop = backdrop
         self._drawers = drawers
+        self._conv_overlay = conv_overlay
         splitter.setParent(self)
         backdrop.setParent(self)
         for d in drawers:
             d.setParent(self)
             d.set_backdrop(backdrop)
+        if conv_overlay:
+            conv_overlay.setParent(self)
+            conv_overlay.hide()
         splitter.show()
         backdrop.hide()
         for d in drawers:
@@ -1324,10 +1429,112 @@ class ContentArea(QWidget):
             self._backdrop.setGeometry(self.rect())
         for d in self._drawers:
             if d.is_open():
-                r = d.geometry()
                 w = d.WIDTH
                 d.setGeometry(self.width() - w, 0, w, self.height())
-            # else keep it off-screen; animation handles it
+        if self._conv_overlay and self._conv_overlay.is_open():
+            w = self._conv_overlay._panel_width()
+            self._conv_overlay.setGeometry(0, 0, w, self.height())
+
+
+# ── Chat bubble ──────────────────────────────────────────────────────────────
+
+def _md_to_html(text: str) -> str:
+    """Convert basic markdown to HTML for display in QLabel."""
+    import re
+    # Escape HTML special chars first
+    text = text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    # Bold
+    text = re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", text)
+    # Italic
+    text = re.sub(r"\*(.+?)\*", r"<i>\1</i>", text)
+    # Inline code
+    text = re.sub(r"`(.+?)`", r"<code>\1</code>", text)
+    # Bullet lists: lines starting with "- " or "• "
+    lines = text.split("\n")
+    result, in_list = [], False
+    for line in lines:
+        stripped = line.lstrip()
+        if stripped.startswith("- ") or stripped.startswith("• "):
+            if not in_list:
+                result.append("<ul style='margin:4px 0; padding-left:18px;'>")
+                in_list = True
+            result.append(f"<li>{stripped[2:]}</li>")
+        else:
+            if in_list:
+                result.append("</ul>")
+                in_list = False
+            result.append(line)
+    if in_list:
+        result.append("</ul>")
+    text = "\n".join(result)
+    # Paragraphs: double newline → paragraph break
+    text = re.sub(r"\n{2,}", "<br><br>", text)
+    # Single newline → line break
+    text = text.replace("\n", "<br>")
+    return text
+
+
+class ChatBubble(QFrame):
+    def __init__(self, role: str, content: str, theme: dict = None, parent=None):
+        super().__init__(parent)
+        self._role = role
+        self._raw_content = content
+        self.setObjectName("chat_bubble_outer")
+        self.setStyleSheet(
+            "QFrame#chat_bubble_outer { background: transparent; border: none; }"
+        )
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 4)
+        outer.setSpacing(4)
+
+        # Header row: role label + timestamp + copy button
+        header = QHBoxLayout()
+        header.setSpacing(6)
+        role_lbl = QLabel("Tú" if role == "user" else "Asistente")
+        role_lbl.setObjectName("mono")
+        role_lbl.setStyleSheet(
+            "font-size: 10.5px; font-weight: 600; background: transparent; border: none;"
+        )
+        header.addWidget(role_lbl)
+
+        from datetime import datetime as _dt
+        ts = QLabel(_dt.now().strftime("%H:%M"))
+        ts.setObjectName("mono")
+        ts.setStyleSheet("font-size: 9.5px; background: transparent; border: none;")
+        header.addWidget(ts)
+        header.addStretch()
+
+        self._copy_btn = QPushButton("Copiar")
+        self._copy_btn.setObjectName("ghost")
+        self._copy_btn.setFixedHeight(18)
+        self._copy_btn.setStyleSheet("font-size: 10px; padding: 0 6px; border-radius: 4px;")
+        self._copy_btn.clicked.connect(self._copy_text)
+        header.addWidget(self._copy_btn)
+        outer.addLayout(header)
+
+        inner = QFrame()
+        inner.setObjectName("chat_user_bg" if role == "user" else "chat_assistant_bg")
+        il = QVBoxLayout(inner)
+        il.setContentsMargins(12, 10, 12, 10)
+
+        self._content_lbl = QLabel()
+        self._content_lbl.setWordWrap(True)
+        self._content_lbl.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        self._content_lbl.setStyleSheet(
+            "font-size: 13px; line-height: 1.6; background: transparent; border: none;"
+        )
+        self._content_lbl.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        self._content_lbl.setOpenExternalLinks(False)
+        self.set_content(content)
+        il.addWidget(self._content_lbl)
+        outer.addWidget(inner)
+
+    def set_content(self, text: str):
+        self._raw_content = text
+        self._content_lbl.setText(_md_to_html(text))
+
+    def _copy_text(self):
+        QGuiApplication.clipboard().setText(self._raw_content)
 
 
 # ── Main window ───────────────────────────────────────────────────────────────
@@ -1343,6 +1550,8 @@ class MainWindow(QMainWindow):
         self._pdf_add_callback = None
         self._pw = None
         self._running = False
+        self._chat_send_cb = None
+        self.setWindowIcon(build_app_icon())
 
         # Central widget
         central = QWidget()
@@ -1354,64 +1563,57 @@ class MainWindow(QMainWindow):
         # ── Command bar ──────────────────────────────────────────
         self._cmd_bar = QFrame()
         self._cmd_bar.setObjectName("command_bar")
-        self._cmd_bar.setFixedHeight(44)
+        self._cmd_bar.setFixedHeight(56)
         cmd_lay = QHBoxLayout(self._cmd_bar)
-        cmd_lay.setContentsMargins(12, 0, 12, 0)
-        cmd_lay.setSpacing(8)
+        cmd_lay.setContentsMargins(16, 0, 16, 0)
+        cmd_lay.setSpacing(10)
 
-        # Logo + title
-        logo_lbl = QLabel("⚖")
-        logo_lbl.setStyleSheet(
-            "font-size: 16px; background-color: #3b7dd8; border-radius: 5px;"
-            " padding: 2px 5px; color: white;"
-        )
-        cmd_lay.addWidget(logo_lbl)
-
+        # Title + date stacked vertically on the left
+        title_col = QVBoxLayout()
+        title_col.setSpacing(1)
+        title_col.setContentsMargins(0, 0, 0, 0)
         title_lbl = QLabel("Diagnóstico legal")
-        title_lbl.setStyleSheet("font-size: 12px; font-weight: 600;")
-        cmd_lay.addWidget(title_lbl)
-
-        self._case_id_lbl = QLabel("/ CASE-2026-0314")
+        title_lbl.setStyleSheet("font-size: 13px; font-weight: 700;")
+        title_col.addWidget(title_lbl)
+        today = _date.today()
+        months = ["ene","feb","mar","abr","may","jun","jul","ago","sep","oct","nov","dic"]
+        date_str = f"{today.day} {months[today.month - 1]} {today.year}"
+        self._case_id_lbl = QLabel(date_str)
         self._case_id_lbl.setObjectName("mono")
-        cmd_lay.addWidget(self._case_id_lbl)
+        title_col.addWidget(self._case_id_lbl)
+        cmd_lay.addLayout(title_col)
+
+        cmd_lay.addSpacing(12)
 
         # Search bar
         self._search_bar = QLineEdit()
-        self._search_bar.setPlaceholderText("Buscar en caso, documentos y citas…  ⌘K")
-        self._search_bar.setFixedHeight(28)
-        self._search_bar.setMaximumWidth(380)
+        self._search_bar.setPlaceholderText("Buscar en el chat…  Ctrl+K")
+        self._search_bar.setFixedHeight(32)
+        self._search_bar.setMaximumWidth(360)
         cmd_lay.addWidget(self._search_bar, 1)
-        cmd_lay.addSpacing(4)
+        cmd_lay.addSpacing(8)
 
-        # Buttons
-        self._history_btn = QPushButton("Historial")
-        self._history_btn.setObjectName("ghost")
-        self._history_btn.setFixedHeight(26)
-        cmd_lay.addWidget(self._history_btn)
-
-        self._theme_btn = QPushButton("☽")
+        self._theme_btn = QPushButton("◑")
         self._theme_btn.setObjectName("ghost")
-        self._theme_btn.setFixedSize(28, 28)
-        self._theme_btn.setToolTip("Alternar tema")
+        self._theme_btn.setFixedSize(32, 32)
+        self._theme_btn.setStyleSheet(
+            "QPushButton { font-size: 16px; border: none; background: transparent; }"
+            "QPushButton:hover { background: rgba(128,128,128,0.12); border-radius: 6px; }"
+        )
+        self._theme_btn.setToolTip("Alternar tema claro / oscuro")
         self._theme_btn.clicked.connect(self.toggle_theme)
         cmd_lay.addWidget(self._theme_btn)
 
         divider = QFrame()
         divider.setFrameShape(QFrame.Shape.VLine)
-        divider.setFixedHeight(18)
+        divider.setFixedHeight(22)
         divider.setStyleSheet("color: #e4e7eb;")
         cmd_lay.addWidget(divider)
 
-        self._hyp_btn = QPushButton("✦  Hipótesis")
-        self._hyp_btn.setObjectName("soft")
-        self._hyp_btn.setFixedHeight(28)
-        self._hyp_btn.setToolTip("Evaluar hipótesis  (Ctrl+E)")
-        cmd_lay.addWidget(self._hyp_btn)
-
-        self._diag_btn = QPushButton("▶  Diagnosticar")
+        self._diag_btn = QPushButton("▶  Analizar")
         self._diag_btn.setObjectName("primary")
-        self._diag_btn.setFixedHeight(28)
-        self._diag_btn.setToolTip("Diagnosticar  (Ctrl+Enter)")
+        self._diag_btn.setFixedSize(110, 34)
+        self._diag_btn.setToolTip("Analizar caso  (Ctrl+Enter)")
         cmd_lay.addWidget(self._diag_btn)
 
         root_lay.addWidget(self._cmd_bar)
@@ -1429,76 +1631,134 @@ class MainWindow(QMainWindow):
         self._pdf_tray = PdfTray(LIGHT_THEME)
         self._pdf_tray.setObjectName("pdf_tray")
         self._pdf_tray.setMinimumWidth(180)
-        self._pdf_tray.setMaximumWidth(360)
+        self._pdf_tray.setMaximumWidth(320)
         self._pdf_tray.set_dblclick_callback(self._open_pdf_detail)
         splitter.addWidget(self._pdf_tray)
 
-        # Center pane: editor + timeline
+        # Center pane: compact editor + chat + input
         center_widget = QWidget()
         center_lay = QVBoxLayout(center_widget)
-        center_lay.setContentsMargins(14, 12, 14, 12)
-        center_lay.setSpacing(10)
+        center_lay.setContentsMargins(0, 0, 0, 0)
+        center_lay.setSpacing(0)
+
+        # Compact editor section
+        editor_section = QWidget()
+        es_lay = QVBoxLayout(editor_section)
+        es_lay.setContentsMargins(14, 10, 14, 8)
+        es_lay.setSpacing(6)
 
         editor_header = QHBoxLayout()
+        editor_header.setSpacing(8)
         editor_title = QLabel("Resumen del caso")
         editor_title.setObjectName("section")
         editor_header.addWidget(editor_title)
-        kbd_hint = QLabel("  ⌃⏎ diagnosticar · ⌃E hipótesis")
+        kbd_hint = QLabel("  Ctrl+Enter para analizar")
         kbd_hint.setObjectName("mono")
         editor_header.addWidget(kbd_hint)
         editor_header.addStretch()
-
         toolbar = QHBoxLayout()
         toolbar.setSpacing(4)
         self._clear_btn = QPushButton("Limpiar")
         self._clear_btn.setObjectName("ghost")
-        self._clear_btn.setFixedHeight(24)
+        self._clear_btn.setFixedHeight(28)
         self._paste_btn = QPushButton("Pegar")
         self._paste_btn.setObjectName("ghost")
-        self._paste_btn.setFixedHeight(24)
+        self._paste_btn.setFixedHeight(28)
         toolbar.addWidget(self._clear_btn)
         toolbar.addWidget(self._paste_btn)
-        toolbar.addStretch()
         editor_header.addLayout(toolbar)
-        center_lay.addLayout(editor_header)
+        es_lay.addLayout(editor_header)
 
         self._editor = QTextEdit()
+        self._editor.setFixedHeight(82)
         self._editor.setPlaceholderText(
             "Ej. El cliente firmó un contrato de arrendamiento en 2020 y…"
         )
         self._editor.textChanged.connect(self._update_status)
-        center_lay.addWidget(self._editor, 1)
+        es_lay.addWidget(self._editor)
 
         self._counter_lbl = QLabel("0 palabras · 0 caracteres")
         self._counter_lbl.setObjectName("mono")
         self._counter_lbl.setAlignment(Qt.AlignmentFlag.AlignRight)
-        center_lay.addWidget(self._counter_lbl)
+        es_lay.addWidget(self._counter_lbl)
+        center_lay.addWidget(editor_section)
 
-        self._timeline = TimelineWidget(LIGHT_THEME)
+        self._editor_sep = QWidget()
+        self._editor_sep.setFixedHeight(1)
+        self._editor_sep.setStyleSheet(f"background-color: {LIGHT_THEME['border']};")
+        center_lay.addWidget(self._editor_sep)
+
+        # Chat messages area
+        self._chat_scroll = QScrollArea()
+        self._chat_scroll.setWidgetResizable(True)
+        self._chat_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self._chat_container = QWidget()
+        self._chat_lay = QVBoxLayout(self._chat_container)
+        self._chat_lay.setContentsMargins(12, 12, 12, 8)
+        self._chat_lay.setSpacing(10)
+        self._chat_lay.addStretch()
+        self._chat_scroll.setWidget(self._chat_container)
+        center_lay.addWidget(self._chat_scroll, 1)
+
+        # Processing status bar
+        self._timeline = ProcessingWidget(LIGHT_THEME)
         center_lay.addWidget(self._timeline)
+
+        # Chat input row
+        input_frame = QFrame()
+        input_frame.setObjectName("card")
+        input_frame.setStyleSheet(
+            "QFrame#card { border-radius: 0; border-left: none;"
+            " border-right: none; border-bottom: none; }"
+        )
+        ifl = QHBoxLayout(input_frame)
+        ifl.setContentsMargins(12, 8, 12, 12)
+        ifl.setSpacing(8)
+        self._chat_input = QLineEdit()
+        self._chat_input.setPlaceholderText(
+            "Escribe un mensaje o pregunta sobre el caso…"
+        )
+        self._chat_input.setFixedHeight(34)
+        self._chat_input.returnPressed.connect(self._on_chat_send_internal)
+        self._send_btn = QPushButton("Enviar")
+        self._send_btn.setObjectName("soft")
+        self._send_btn.setFixedHeight(34)
+        self._send_btn.setFixedWidth(70)
+        self._send_btn.clicked.connect(self._on_chat_send_internal)
+        ifl.addWidget(self._chat_input)
+        ifl.addWidget(self._send_btn)
+        center_lay.addWidget(input_frame)
+
         splitter.addWidget(center_widget)
 
         # Right pane: results
         self._results = ResultsPane(LIGHT_THEME)
         self._results.setObjectName("results_pane")
-        self._results.setMinimumWidth(260)
-        self._results.setMaximumWidth(480)
+        self._results.setMinimumWidth(300)
+        self._results.setMaximumWidth(560)
         splitter.addWidget(self._results)
+        self._results.hide()   # hidden until first analysis
 
-        splitter.setSizes([240, 9999, 340])
+        self._splitter = splitter
+        splitter.setSizes([220, 9999, 0])
         splitter.setStretchFactor(0, 0)
         splitter.setStretchFactor(1, 1)
         splitter.setStretchFactor(2, 0)
 
         # Drawers
         self._just_drawer = DrawerPanel("Justificación del diagnóstico", "Razonamiento, citas y normativa")
-        self._hist_drawer = DrawerPanel("Historial de análisis", "Ejecuciones recientes")
+
+        # Conversation overlay
+        self._conv_overlay = ConversationOverlay(LIGHT_THEME)
 
         backdrop = BackdropWidget()
+        backdrop.set_close_callback(self._close_all_overlays)
 
-        self._content_area.setup(splitter, backdrop, [self._just_drawer, self._hist_drawer])
+        self._content_area.setup(splitter, backdrop, [self._just_drawer], self._conv_overlay)
+        self._pdf_tray.set_menu_callback(self._toggle_conv_overlay)
+        self._conv_overlay.set_splitter(splitter)
         self._results.set_on_justify(self._open_just_drawer)
-        self._history_btn.clicked.connect(self._open_hist_drawer)
+        self._search_bar.textChanged.connect(self._on_search_changed)
 
         # Status bar
         self._status = self.statusBar()
@@ -1510,18 +1770,25 @@ class MainWindow(QMainWindow):
 
         # Keyboard shortcuts
         QShortcut(QKeySequence("Ctrl+Return"), self).activated.connect(self._diag_btn.click)
-        QShortcut(QKeySequence("Ctrl+E"), self).activated.connect(self._hyp_btn.click)
         QShortcut(QKeySequence("Ctrl+K"), self).activated.connect(self._search_bar.setFocus)
         QShortcut(QKeySequence("Escape"), self).activated.connect(self._close_open_drawer)
 
         self.apply_theme()
+
+        # Welcome chat message
+        self.add_chat_message(
+            "assistant",
+            "Hola, soy tu asistente de análisis legal. Describe el caso en el "
+            "editor o escríbeme directamente aquí. Cuando estés listo, pulsa "
+            "▶ Analizar o hazme una pregunta."
+        )
 
     # ── Theme ─────────────────────────────────────────────────
 
     def apply_theme(self):
         theme = DARK_THEME if self.is_dark_mode else LIGHT_THEME
         self.setStyleSheet(get_stylesheet(theme))
-        self._theme_btn.setText("☀" if self.is_dark_mode else "☽")
+        self._theme_btn.setText("○" if self.is_dark_mode else "◑")
         if self.is_dark_mode:
             self._cmd_bar.setStyleSheet(
                 f"QFrame#command_bar {{ background-color: {DARK_THEME['canvas']};"
@@ -1529,6 +1796,7 @@ class MainWindow(QMainWindow):
             )
         else:
             self._cmd_bar.setStyleSheet("")
+        self._editor_sep.setStyleSheet(f"background-color: {theme['border']};")
         self._results.update_theme(theme)
         self._timeline.update_theme(theme)
         self._pdf_tray.update_theme(theme)
@@ -1544,13 +1812,20 @@ class MainWindow(QMainWindow):
     def _open_just_drawer(self):
         self._just_drawer.open_drawer()
 
-    def _open_hist_drawer(self):
-        self._hist_drawer.open_drawer()
+    def _toggle_conv_overlay(self):
+        self._conv_overlay.toggle()
+
+    def _close_all_overlays(self):
+        if self._just_drawer.is_open():
+            self._just_drawer.close_drawer()
+        if self._conv_overlay.is_open():
+            self._conv_overlay.hide_overlay()
 
     def _close_open_drawer(self):
-        for d in [self._just_drawer, self._hist_drawer]:
-            if d.is_open():
-                d.close_drawer()
+        if self._just_drawer.is_open():
+            self._just_drawer.close_drawer()
+        elif self._conv_overlay.is_open():
+            self._conv_overlay.hide_overlay()
 
     # ── Editor helpers ─────────────────────────────────────────
 
@@ -1573,7 +1848,9 @@ class MainWindow(QMainWindow):
 
     def _update_status_running(self, is_running):
         self._running = is_running
-        self._hyp_btn.setEnabled(not is_running)
+        self._diag_btn.setEnabled(not is_running)
+        self._send_btn.setEnabled(not is_running)
+        self._chat_input.setEnabled(not is_running)
         self._diag_btn.setEnabled(not is_running)
         self._update_status()
 
@@ -1591,17 +1868,60 @@ class MainWindow(QMainWindow):
 
     # ── Controller interface (public API) ──────────────────────
 
-    def on_evaluate_clicked(self, callback):
-        def _wrapped():
-            self._update_status_running(True)
-            self._timeline.start_animation(on_done=lambda: (callback(), self._update_status_running(False)))
-        self._hyp_btn.clicked.connect(_wrapped)
-
     def on_diagnose_clicked(self, callback):
         def _wrapped():
             self._update_status_running(True)
-            self._timeline.start_animation(on_done=lambda: (callback(), self._update_status_running(False)))
+            self.add_chat_message("assistant", "Analizando el caso… (puede tardar unos segundos)")
+            self._timeline.start_animation(on_done=callback)
         self._diag_btn.clicked.connect(_wrapped)
+
+    def set_running(self, is_running: bool):
+        self._update_status_running(is_running)
+        if not is_running:
+            self._timeline.set_done()
+
+    def show_status_error(self, message: str):
+        self._status.showMessage(f"⚠ {message}")
+
+    def on_chat_send(self, callback):
+        self._chat_send_cb = callback
+
+    def add_chat_message(self, role: str, content: str) -> "ChatBubble":
+        theme = DARK_THEME if self.is_dark_mode else LIGHT_THEME
+        bubble = ChatBubble(role, content, theme)
+        count = self._chat_lay.count()
+        self._chat_lay.insertWidget(count - 1, bubble)
+        self._scroll_chat_bottom()
+        return bubble
+
+    def _scroll_chat_bottom(self):
+        QTimer.singleShot(40, lambda: self._chat_scroll.verticalScrollBar().setValue(
+            self._chat_scroll.verticalScrollBar().maximum()
+        ))
+
+    def show_typing_indicator(self) -> "ChatBubble":
+        return self.add_chat_message("assistant", "…")
+
+    def remove_bubble(self, bubble: "ChatBubble"):
+        self._chat_lay.removeWidget(bubble)
+        bubble.deleteLater()
+
+    def add_regenerate_button(self, callback):
+        btn = QPushButton("↺  Regenerar análisis")
+        btn.setObjectName("ghost")
+        btn.setFixedHeight(26)
+        btn.setStyleSheet("font-size: 11px; margin-left: 4px;")
+        count = self._chat_lay.count()
+        self._chat_lay.insertWidget(count - 1, btn)
+        btn.clicked.connect(lambda: (callback(), btn.deleteLater()))
+        self._scroll_chat_bottom()
+
+    def _on_chat_send_internal(self):
+        text = self._chat_input.text().strip()
+        if not text or not self._chat_send_cb:
+            return
+        self._chat_input.clear()
+        self._chat_send_cb(text)
 
     def on_justify_clicked(self, callback):
         self._on_justify_cb = callback
@@ -1609,6 +1929,76 @@ class MainWindow(QMainWindow):
     def on_pdf_clicked(self, callback):
         # Gestionar PDFs: in V3 the tray is always visible; wire to opening the detail viewer
         pass  # no dedicated button; double-click in tray opens the viewer
+
+    def on_new_chat(self, callback):
+        from PyQt6.QtWidgets import QInputDialog
+        def _ask_name():
+            name, ok = QInputDialog.getText(
+                self, "Nuevo chat", "Nombre del caso:",
+                text="Caso sin título"
+            )
+            if ok:
+                callback(name.strip() or "Caso sin título")
+                self._conv_overlay.hide_overlay()
+        self._conv_overlay.set_new_callback(_ask_name)
+
+    def on_conv_selected(self, callback):
+        self._conv_overlay.set_select_callback(callback)
+
+    def show_conversations(self, convs: list):
+        self._conv_overlay.update_conversations(convs)
+
+    def reveal_results_pane(self):
+        if not self._results.isVisible():
+            self._results.show()
+            self._splitter.setSizes([220, 9999, 440])
+
+    def clear_chat(self):
+        lay = self._chat_lay
+        for i in reversed(range(lay.count())):
+            item = lay.itemAt(i)
+            if not item:
+                continue
+            w = item.widget()
+            if w:
+                lay.removeWidget(w)
+                w.hide()
+                w.deleteLater()
+            else:
+                lay.removeItem(item)  # remove spacer/stretch items too
+        lay.addStretch()
+        self._chat_scroll.verticalScrollBar().setValue(0)
+
+    def clear_results(self):
+        self._results.update_hypotheses([])
+        self._results.update_diagnosis({"diagnosis": "Sin análisis aún", "severity": "medium"})
+
+    def on_export_clicked(self, callback):
+        self._results.set_on_export(callback)
+
+    def _on_search_changed(self, query: str):
+        query = query.strip().lower()
+        lay = self._chat_lay
+        for i in range(lay.count()):
+            item = lay.itemAt(i)
+            if not item:
+                continue
+            w = item.widget()
+            if not isinstance(w, ChatBubble):
+                continue
+            if not query:
+                w.setVisible(True)
+                w.setGraphicsEffect(None)
+                continue
+            labels = w.findChildren(QLabel)
+            text = " ".join(lbl.text().lower() for lbl in labels)
+            match = query in text
+            w.setVisible(True)
+            opacity = 1.0 if match else 0.25
+            from PyQt6.QtWidgets import QGraphicsOpacityEffect
+            effect = QGraphicsOpacityEffect(w)
+            effect.setOpacity(opacity)
+            w.setGraphicsEffect(effect)
 
     def on_pdf_add_clicked(self, callback):
         self._pdf_add_callback = callback
@@ -1623,6 +2013,9 @@ class MainWindow(QMainWindow):
     def get_symptoms(self):
         return [line for line in self._editor.toPlainText().split("\n") if line.strip()]
 
+    def set_editor_text(self, text: str):
+        self._editor.setPlainText(text)
+
     def show_hypotheses(self, hypotheses):
         self._results.update_hypotheses(hypotheses)
 
@@ -1632,6 +2025,7 @@ class MainWindow(QMainWindow):
         else:
             data = diagnosis
         self._results.update_diagnosis(data)
+        self.reveal_results_pane()
 
     def show_justification(self, justification):
         theme = DARK_THEME if self.is_dark_mode else LIGHT_THEME
