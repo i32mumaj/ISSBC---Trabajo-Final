@@ -2048,6 +2048,7 @@ class MainWindow(QMainWindow):
         QShortcut(QKeySequence("Ctrl+Return"), self).activated.connect(self._diag_btn.click)
         QShortcut(QKeySequence("Ctrl+K"), self).activated.connect(self._search_bar.setFocus)
         QShortcut(QKeySequence("Escape"), self).activated.connect(self._close_open_drawer)
+        QShortcut(QKeySequence("Ctrl+?"), self).activated.connect(self._show_shortcuts)
 
         self.apply_theme()
 
@@ -2096,6 +2097,45 @@ class MainWindow(QMainWindow):
             self._just_drawer.close_drawer()
         if self._conv_overlay.is_open():
             self._conv_overlay.hide_overlay()
+
+    def _show_shortcuts(self):
+        from PyQt6.QtWidgets import QDialog, QTableWidget, QTableWidgetItem, QHeaderView
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Atajos de teclado")
+        dlg.setMinimumWidth(360)
+        theme = DARK_THEME if self.is_dark_mode else LIGHT_THEME
+        dlg.setStyleSheet(get_stylesheet(theme))
+        lay = QVBoxLayout(dlg)
+        lay.setContentsMargins(16, 16, 16, 16)
+        lay.setSpacing(10)
+        lbl = QLabel("Atajos de teclado")
+        lbl.setStyleSheet("font-size: 14px; font-weight: 700;")
+        lay.addWidget(lbl)
+        shortcuts = [
+            ("Ctrl+Enter", "Analizar caso"),
+            ("Ctrl+K", "Buscar en el chat"),
+            ("Ctrl+?", "Mostrar atajos"),
+            ("Escape", "Cerrar panel / overlay"),
+        ]
+        tbl = QTableWidget(len(shortcuts), 2)
+        tbl.setHorizontalHeaderLabels(["Atajo", "Acción"])
+        tbl.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        tbl.verticalHeader().setVisible(False)
+        tbl.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        tbl.setSelectionMode(QTableWidget.SelectionMode.NoSelection)
+        tbl.setShowGrid(False)
+        tbl.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        for i, (key, desc) in enumerate(shortcuts):
+            key_item = QTableWidgetItem(key)
+            key_item.setFont(QFont("JetBrains Mono, Consolas, monospace", 11))
+            tbl.setItem(i, 0, key_item)
+            tbl.setItem(i, 1, QTableWidgetItem(desc))
+        lay.addWidget(tbl)
+        close = QPushButton("Cerrar")
+        close.setObjectName("primary")
+        close.clicked.connect(dlg.accept)
+        lay.addWidget(close, alignment=Qt.AlignmentFlag.AlignRight)
+        dlg.exec()
 
     def _close_open_drawer(self):
         if self._just_drawer.is_open():
