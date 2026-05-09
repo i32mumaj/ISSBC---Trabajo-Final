@@ -270,14 +270,18 @@ class Controller(QObject):
         self.view.show_pdf_window(self.model.pdfs)
         self._auto_save()
 
-    def manage_pdfs(self):
-        files, _ = QFileDialog.getOpenFileNames(
-            self.view, "Seleccionar PDFs", "", "PDF Files (*.pdf)"
-        )
+    def manage_pdfs(self, files=None):
+        if files is None:
+            files, _ = QFileDialog.getOpenFileNames(
+                self.view, "Seleccionar PDFs", "", "PDF Files (*.pdf)"
+            )
         if files:
-            self.model.pdfs.extend(self.pdf_service.add_pdfs(files))
-            self.view.show_pdf_window(self.model.pdfs)
-            self._auto_save()
+            existing = {p["path"] for p in self.model.pdfs}
+            new_files = [f for f in files if f not in existing]
+            if new_files:
+                self.model.pdfs.extend(self.pdf_service.add_pdfs(new_files))
+                self.view.show_pdf_window(self.model.pdfs)
+                self._auto_save()
 
     def export_diagnosis(self):
         if not self.model.diagnosis:

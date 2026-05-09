@@ -1268,6 +1268,8 @@ class PdfTray(QFrame):
             lambda cur, _: self._del_btn.setEnabled(cur is not None)
         )
 
+        self.setAcceptDrops(True)
+
     def set_add_callback(self, cb):
         self._add_cb = cb
 
@@ -1345,6 +1347,23 @@ class PdfTray(QFrame):
             self._list.addItem(item)
         if pdfs:
             self._list.setCurrentRow(0)
+
+    def dragEnterEvent(self, event):
+        if event.mimeData().hasUrls():
+            pdfs = [u.toLocalFile() for u in event.mimeData().urls() if u.toLocalFile().lower().endswith(".pdf")]
+            if pdfs:
+                event.acceptProposedAction()
+                return
+        event.ignore()
+
+    def dragMoveEvent(self, event):
+        if event.mimeData().hasUrls():
+            event.acceptProposedAction()
+
+    def dropEvent(self, event):
+        paths = [u.toLocalFile() for u in event.mimeData().urls() if u.toLocalFile().lower().endswith(".pdf")]
+        if paths and self._add_cb:
+            self._add_cb(paths)
 
     def update_theme(self, theme):
         self._theme = theme
