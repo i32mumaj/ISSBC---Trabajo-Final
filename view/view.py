@@ -783,7 +783,7 @@ class ResultsPane(QWidget):
         self._scroll.setFrameShape(QFrame.Shape.NoFrame)
         self._scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self._container = QWidget()
-        self._container.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Maximum)
+        self._container.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
         self._lay = QVBoxLayout(self._container)
         self._lay.setContentsMargins(0, 0, 0, 0)
         self._lay.setSpacing(0)
@@ -803,7 +803,7 @@ class ResultsPane(QWidget):
             "QFrame#card { border-radius: 0; border-left: none; border-right: none; border-top: none; }"
         )
         sh_lay = QVBoxLayout(self._severity_header)
-        sh_lay.setContentsMargins(16, 14, 24, 14)
+        sh_lay.setContentsMargins(16, 14, 16, 14)
         sh_lay.setSpacing(8)
 
         top_row = QHBoxLayout()
@@ -813,17 +813,6 @@ class ResultsPane(QWidget):
         self._date_lbl.setObjectName("mono")
         top_row.addWidget(self._date_lbl)
         top_row.addStretch()
-        self._confidence_lbl = QLabel()
-        self._confidence_lbl.setObjectName("mono")
-        self._confidence_lbl.setStyleSheet("font-size: 10px;")
-        self._confidence_lbl.hide()
-        top_row.addWidget(self._confidence_lbl)
-
-        self._pdf_badge = QLabel()
-        self._pdf_badge.setObjectName("mono")
-        self._pdf_badge.setStyleSheet("font-size: 10px;")
-        self._pdf_badge.hide()
-        top_row.addWidget(self._pdf_badge)
         sh_lay.addLayout(top_row)
 
         self._diag_title = QLabel("Sin análisis aún")
@@ -834,6 +823,21 @@ class ResultsPane(QWidget):
 
         self._severity_meter = SeverityMeter()
         sh_lay.addWidget(self._severity_meter)
+
+        meta_row = QHBoxLayout()
+        meta_row.setSpacing(8)
+        self._confidence_lbl = QLabel()
+        self._confidence_lbl.setObjectName("mono")
+        self._confidence_lbl.setStyleSheet("font-size: 10px;")
+        self._confidence_lbl.hide()
+        meta_row.addWidget(self._confidence_lbl)
+        self._pdf_badge = QLabel()
+        self._pdf_badge.setObjectName("mono")
+        self._pdf_badge.setStyleSheet("font-size: 10px;")
+        self._pdf_badge.hide()
+        meta_row.addWidget(self._pdf_badge)
+        meta_row.addStretch()
+        sh_lay.addLayout(meta_row)
 
         btn_row = QHBoxLayout()
         btn_row.setSpacing(6)
@@ -858,7 +862,7 @@ class ResultsPane(QWidget):
         # Hypotheses section
         self._hyp_section = QFrame()
         hyp_lay = QVBoxLayout(self._hyp_section)
-        hyp_lay.setContentsMargins(16, 12, 24, 4)
+        hyp_lay.setContentsMargins(16, 12, 16, 4)
         hyp_lay.setSpacing(8)
 
         hyp_header = QLabel("HIPÓTESIS")
@@ -877,7 +881,7 @@ class ResultsPane(QWidget):
         # Citations section
         self._cit_section = QFrame()
         cit_lay = QVBoxLayout(self._cit_section)
-        cit_lay.setContentsMargins(16, 4, 24, 14)
+        cit_lay.setContentsMargins(16, 4, 16, 14)
         cit_lay.setSpacing(6)
 
         self._cit_header = QLabel("CITAS")
