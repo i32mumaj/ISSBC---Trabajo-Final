@@ -716,6 +716,8 @@ class ResultsPane(QWidget):
         self._severity = ""
         self._on_justify = None
         self._on_export = None
+        self._diagnosis_data = {}
+        self._hypotheses_data = []
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 20, 0)
@@ -756,6 +758,11 @@ class ResultsPane(QWidget):
         self._date_lbl.setObjectName("mono")
         top_row.addWidget(self._date_lbl)
         top_row.addStretch()
+        self._confidence_lbl = QLabel()
+        self._confidence_lbl.setObjectName("mono")
+        self._confidence_lbl.setStyleSheet("font-size: 10px;")
+        self._confidence_lbl.hide()
+        top_row.addWidget(self._confidence_lbl)
         sh_lay.addLayout(top_row)
 
         self._diag_title = QLabel("Sin análisis aún")
@@ -773,10 +780,15 @@ class ResultsPane(QWidget):
         self._just_btn.setObjectName("soft")
         self._just_btn.setFixedHeight(26)
         self._just_btn.clicked.connect(lambda: self._on_justify() if self._on_justify else None)
+        self._copy_diag_btn = QPushButton("Copiar")
+        self._copy_diag_btn.setObjectName("ghost")
+        self._copy_diag_btn.setFixedHeight(26)
+        self._copy_diag_btn.clicked.connect(self._copy_summary)
         self._export_btn = QPushButton("Exportar")
         self._export_btn.setObjectName("ghost")
         self._export_btn.setFixedHeight(26)
         btn_row.addWidget(self._just_btn)
+        btn_row.addWidget(self._copy_diag_btn)
         btn_row.addWidget(self._export_btn)
         btn_row.addStretch()
         sh_lay.addLayout(btn_row)
@@ -827,14 +839,50 @@ class ResultsPane(QWidget):
     def set_on_export(self, cb):
         self._export_btn.clicked.connect(cb)
 
+    def _copy_summary(self):
+        d = self._diagnosis_data
+        if not d:
+            return
+        sev_map = {"high": "ALTO", "medium": "MEDIO", "low": "BAJO"}
+        lines = [
+            f"DIAGNÓSTICO: {d.get('diagnosis', '')}",
+            f"Severidad: {sev_map.get(d.get('severity', ''), '—')}",
+        ]
+        if d.get("summary"):
+            lines += ["", d["summary"]]
+        if self._hypotheses_data:
+            lines += ["", "Hipótesis:"]
+            for h in sorted(self._hypotheses_data, key=lambda x: x.get("score", 0), reverse=True):
+                pct = int(h.get("score", 0) * 100)
+                lines.append(f"  • {h.get('name', '')} — {pct}%")
+        QGuiApplication.clipboard().setText("\n".join(lines))
+        self._copy_diag_btn.setText("Copiado")
+        QTimer.singleShot(1500, lambda: self._copy_diag_btn.setText("Copiar"))
+
+    def _update_confidence(self):
+        if not self._hypotheses_data:
+            self._confidence_lbl.hide()
+            return
+        avg = sum(h.get("score", 0) for h in self._hypotheses_data) / len(self._hypotheses_data)
+        pct = int(avg * 100)
+        t = self._theme
+        color = t["success"] if pct >= 70 else t["warn"] if pct >= 40 else t["danger"]
+        self._confidence_lbl.setText(f"confianza {pct}%")
+        self._confidence_lbl.setStyleSheet(
+            f"font-size: 10px; color: {color}; background: transparent;"
+        )
+        self._confidence_lbl.show()
+
     def update_theme(self, theme):
         self._theme = theme
         if self._severity:
             self._pill.set_severity(self._severity, theme)
             self._severity_meter.set_severity(self._severity, theme)
+        self._update_confidence()
 
     def update_hypotheses(self, hypotheses):
         t = self._theme
+        self._hypotheses_data = hypotheses or []
         while self._hyp_rows_lay.count():
             item = self._hyp_rows_lay.takeAt(0)
             if item.widget():
@@ -842,7 +890,6 @@ class ResultsPane(QWidget):
         if hypotheses:
             self._hyp_placeholder.hide()
             sorted_hyps = sorted(hypotheses, key=lambda h: h.get("score", 0), reverse=True)
-            count_lbl = self._hyp_section.findChild(QLabel, "hyp_count")
             header_lbl = self._hyp_section.layout().itemAt(0).widget()
             if header_lbl:
                 header_lbl.setText(f"HIPÓTESIS · {len(hypotheses)}")
@@ -852,9 +899,11 @@ class ResultsPane(QWidget):
         else:
             self._hyp_placeholder.show()
             self._hyp_placeholder.setText("—")
+        self._update_confidence()
 
     def update_diagnosis(self, diagnosis_data):
         t = self._theme
+        self._diagnosis_data = diagnosis_data
         severity = diagnosis_data.get("severity", "medium")
         self._severity = severity
         self._pill.set_severity(severity, t)
