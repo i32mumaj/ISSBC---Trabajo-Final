@@ -77,6 +77,7 @@ class Controller(QObject):
         self.view.on_load_case(self.load_case_file)
         self.view.on_new_chat(self.new_chat)
         self.view.on_conv_selected(self.load_conversation)
+        self.view.on_conv_deleted(self.delete_conversation)
         self.view.on_title_changed(self._on_title_changed)
     # ── Session / conversations ───────────────────────────────
 
@@ -88,6 +89,17 @@ class Controller(QObject):
         else:
             cid = new_conv_id()
             self.model.current_conv_id = cid
+
+    def delete_conversation(self, conv_id: str):
+        delete_conv(conv_id)
+        if conv_id == self.model.current_conv_id:
+            convs = load_convs()
+            if convs:
+                self._load_conv_data(convs[0]["id"], update_list=True)
+            else:
+                self.new_chat("Caso sin título")
+        else:
+            self.view.show_conversations(load_convs())
 
     def _on_title_changed(self, text: str):
         self._pending_name = text.strip() or "Caso sin título"
@@ -325,7 +337,7 @@ class Controller(QObject):
         self._auto_save()
 
     def save_case_file(self):
-        import json
+        import json, base64 as _b64
         title = self.view.get_case_title()
         path, _ = QFileDialog.getSaveFileName(
             self.view, "Guardar caso", f"{title}.issbc", "Casos ISSBC (*.issbc)"
@@ -333,6 +345,15 @@ class Controller(QObject):
         if not path:
             return
         self._auto_save()
+        pdfs_embedded = []
+        for p in self.model.pdfs:
+            entry = {"name": p["name"], "path": p["path"]}
+            try:
+                with open(p["path"], "rb") as fh:
+                    entry["data_b64"] = _b64.b64encode(fh.read()).decode("ascii")
+            except Exception:
+                pass
+            pdfs_embedded.append(entry)
         data = {
             "id": self.model.current_conv_id,
             "name": title,
@@ -341,6 +362,7 @@ class Controller(QObject):
             "hypotheses": self.model.hypotheses,
             "diagnosis": self.model.diagnosis,
             "justification": self.model.justification,
+            "pdfs": pdfs_embedded,
             "pdf_paths": [p["path"] for p in self.model.pdfs],
         }
         try:
@@ -351,7 +373,7 @@ class Controller(QObject):
             self.view.show_status_error(f"Error al guardar: {e}")
 
     def load_case_file(self):
-        import json
+        import json, pathlib, base64 as _b64
         path, _ = QFileDialog.getOpenFileName(
             self.view, "Abrir caso", "", "Casos ISSBC (*.issbc)"
         )
@@ -371,8 +393,18 @@ class Controller(QObject):
         self.model.diagnosis = data.get("diagnosis", {})
         self.model.justification = data.get("justification", [])
         self._pending_name = data.get("name", "Caso sin título")
-        import pathlib
-        pdf_paths = [p for p in data.get("pdf_paths", []) if pathlib.Path(p).exists()]
+        cache_dir = pathlib.Path.home() / ".issbc" / "pdf_cache"
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        pdf_paths = []
+        for entry in data.get("pdfs", []):
+            if entry.get("data_b64"):
+                dest = cache_dir / entry["name"]
+                dest.write_bytes(_b64.b64decode(entry["data_b64"]))
+                pdf_paths.append(str(dest))
+            elif pathlib.Path(entry.get("path", "")).exists():
+                pdf_paths.append(entry["path"])
+        if not pdf_paths:
+            pdf_paths = [p for p in data.get("pdf_paths", []) if pathlib.Path(p).exists()]
         self.model.pdfs = self.pdf_service.add_pdfs(pdf_paths) if pdf_paths else []
         self.view.show_pdf_window(self.model.pdfs)
         self.view.set_case_title(self._pending_name)

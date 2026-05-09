@@ -171,6 +171,14 @@ def get_stylesheet(theme):
             color: {theme['text']};
         }}
         QPushButton#soft:hover {{ border-color: {theme['border_strong']}; }}
+        QPushButton#tinted {{
+            background-color: {theme['accent_soft']};
+            border: 1px solid {theme['accent_soft']};
+            color: {theme['accent_text']};
+        }}
+        QPushButton#tinted:hover {{
+            border-color: {theme['accent']};
+        }}
         QPushButton#icon_btn {{
             background-color: transparent;
             border: 1px solid transparent;
@@ -1070,6 +1078,7 @@ class ConversationOverlay(QFrame):
         self._open = False
         self._new_cb = None
         self._select_cb = None
+        self._delete_cb = None
         self._splitter = None
 
         lay = QVBoxLayout(self)
@@ -1081,6 +1090,13 @@ class ConversationOverlay(QFrame):
         title_lbl.setStyleSheet("font-size: 12px; font-weight: 600;")
         hdr.addWidget(title_lbl)
         hdr.addStretch()
+        self._del_conv_btn = QPushButton("🗑")
+        self._del_conv_btn.setObjectName("icon_btn")
+        self._del_conv_btn.setFixedSize(24, 24)
+        self._del_conv_btn.setToolTip("Borrar conversación seleccionada")
+        self._del_conv_btn.setEnabled(False)
+        self._del_conv_btn.clicked.connect(self._on_delete_selected)
+        hdr.addWidget(self._del_conv_btn)
         close_btn = QPushButton("✕")
         close_btn.setObjectName("icon_btn")
         close_btn.setFixedSize(24, 24)
@@ -1098,6 +1114,9 @@ class ConversationOverlay(QFrame):
         self._list.setFrameShape(QFrame.Shape.NoFrame)
         self._list.setSpacing(1)
         self._list.itemClicked.connect(self._on_select)
+        self._list.itemSelectionChanged.connect(
+            lambda: self._del_conv_btn.setEnabled(len(self._list.selectedItems()) > 0)
+        )
         lay.addWidget(self._list, 1)
 
     def set_splitter(self, splitter):
@@ -1138,6 +1157,15 @@ class ConversationOverlay(QFrame):
 
     def set_select_callback(self, cb):
         self._select_cb = cb
+
+    def set_delete_callback(self, cb):
+        self._delete_cb = cb
+
+    def _on_delete_selected(self):
+        items = self._list.selectedItems()
+        if items and self._delete_cb:
+            conv_id = items[0].data(Qt.ItemDataRole.UserRole)
+            self._delete_cb(conv_id)
 
     def _on_new(self):
         if self._new_cb:
@@ -1820,38 +1848,31 @@ class MainWindow(QMainWindow):
         self._cmd_bar.setFixedHeight(56)
         cmd_lay = QHBoxLayout(self._cmd_bar)
         cmd_lay.setContentsMargins(16, 0, 16, 0)
-        cmd_lay.setSpacing(10)
+        cmd_lay.setSpacing(6)
 
-        # Editable title + date stacked vertically on the left
-        title_col = QVBoxLayout()
-        title_col.setSpacing(1)
-        title_col.setContentsMargins(0, 0, 0, 0)
+        # Editable title inline with date
         self._title_edit = QLineEdit("Caso sin título")
         self._title_edit.setStyleSheet(
             "QLineEdit { font-size: 13px; font-weight: 700; border: none;"
-            " background: transparent; padding: 0; }"
+            " background: transparent; padding: 0 4px; }"
             "QLineEdit:focus { border-bottom: 1px solid palette(highlight); }"
         )
-        self._title_edit.setFixedHeight(18)
-        self._title_edit.setMaximumWidth(220)
-        title_col.addWidget(self._title_edit)
+        self._title_edit.setFixedHeight(34)
+        self._title_edit.setFixedWidth(300)
+        cmd_lay.addWidget(self._title_edit)
+
         today = _date.today()
         months = ["ene","feb","mar","abr","may","jun","jul","ago","sep","oct","nov","dic"]
         date_str = f"{today.day} {months[today.month - 1]} {today.year}"
         self._case_id_lbl = QLabel(date_str)
         self._case_id_lbl.setObjectName("mono")
-        title_col.addWidget(self._case_id_lbl)
-        cmd_lay.addLayout(title_col)
+        cmd_lay.addWidget(self._case_id_lbl)
 
-        cmd_lay.addSpacing(12)
-
-        # Search bar
+        # Search bar takes remaining space
         self._search_bar = QLineEdit()
         self._search_bar.setPlaceholderText("Buscar en el chat…  Ctrl+K")
         self._search_bar.setFixedHeight(32)
-        self._search_bar.setMaximumWidth(360)
         cmd_lay.addWidget(self._search_bar, 1)
-        cmd_lay.addSpacing(8)
 
         self._theme_btn = QPushButton("◑")
         self._theme_btn.setObjectName("ghost")
@@ -1865,13 +1886,13 @@ class MainWindow(QMainWindow):
         cmd_lay.addWidget(self._theme_btn)
 
         self._save_btn = QPushButton("↓ Guardar")
-        self._save_btn.setObjectName("ghost")
+        self._save_btn.setObjectName("tinted")
         self._save_btn.setFixedSize(110, 34)
         self._save_btn.setToolTip("Guardar caso como .issbc")
         cmd_lay.addWidget(self._save_btn)
 
         self._load_btn = QPushButton("↑ Abrir")
-        self._load_btn.setObjectName("ghost")
+        self._load_btn.setObjectName("tinted")
         self._load_btn.setFixedSize(110, 34)
         self._load_btn.setToolTip("Abrir caso .issbc")
         cmd_lay.addWidget(self._load_btn)
@@ -2256,6 +2277,9 @@ class MainWindow(QMainWindow):
 
     def on_conv_selected(self, callback):
         self._conv_overlay.set_select_callback(callback)
+
+    def on_conv_deleted(self, callback):
+        self._conv_overlay.set_delete_callback(callback)
 
     def show_conversations(self, convs: list):
         self._conv_overlay.update_conversations(convs)
