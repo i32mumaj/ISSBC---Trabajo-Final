@@ -782,8 +782,9 @@ class ResultsPane(QWidget):
         self._scroll.setWidgetResizable(True)
         self._scroll.setFrameShape(QFrame.Shape.NoFrame)
         self._scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self._scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self._container = QWidget()
-        self._container.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
+        self._container.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         self._lay = QVBoxLayout(self._container)
         self._lay.setContentsMargins(0, 0, 0, 0)
         self._lay.setSpacing(0)
@@ -791,6 +792,12 @@ class ResultsPane(QWidget):
         outer.addWidget(self._scroll)
 
         self._build_empty()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        vw = self._scroll.viewport().width()
+        if vw > 0:
+            self._container.setMaximumWidth(vw)
 
     def _build_empty(self):
         t = self._theme
