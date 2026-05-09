@@ -1230,6 +1230,12 @@ class PdfTray(QFrame):
         self._list.itemDoubleClicked.connect(self._on_double_click)
         lay.addWidget(self._list, 1)
 
+        self._load_bar = QProgressBar()
+        self._load_bar.setFixedHeight(3)
+        self._load_bar.setTextVisible(False)
+        self._load_bar.hide()
+        lay.addWidget(self._load_bar)
+
         # Mini preview box
         sep = QFrame()
         sep.setFrameShape(QFrame.Shape.HLine)
@@ -2183,6 +2189,15 @@ class MainWindow(QMainWindow):
 
     def on_pdf_remove_clicked(self, callback):
         self._pdf_tray.set_remove_callback(callback)
+
+    def show_pdf_loading(self, current: int, total: int):
+        bar = self._pdf_tray._load_bar
+        if total == 0 or current >= total:
+            bar.hide()
+            return
+        bar.setRange(0, total)
+        bar.setValue(current)
+        bar.show()
 
     def get_symptoms(self):
         return [line for line in self._editor.toPlainText().split("\n") if line.strip()]

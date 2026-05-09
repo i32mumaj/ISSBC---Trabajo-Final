@@ -11,6 +11,23 @@ from services.conversation_service import (
 )
 
 
+class _PDFWorker(QThread):
+    finished = pyqtSignal(list)
+    progress = pyqtSignal(int, int)
+
+    def __init__(self, pdf_service, paths):
+        super().__init__()
+        self._service = pdf_service
+        self._paths = paths
+
+    def run(self):
+        result = self._service.add_pdfs(
+            self._paths,
+            on_progress=lambda i, t: self.progress.emit(i, t)
+        )
+        self.finished.emit(result)
+
+
 class _LLMWorker(QThread):
     finished = pyqtSignal(str, object)
     failed = pyqtSignal(str, str)
@@ -41,6 +58,7 @@ class Controller(QObject):
         self.pdf_service = PDFService()
         self.export_service = ExportService()
         self._worker: _LLMWorker | None = None
+        self._pdf_worker: _PDFWorker | None = None
         self._typing_bubble = None
         self._pending_name: str | None = None
         self._stream_text: str = ""
@@ -275,13 +293,27 @@ class Controller(QObject):
             files, _ = QFileDialog.getOpenFileNames(
                 self.view, "Seleccionar PDFs", "", "PDF Files (*.pdf)"
             )
-        if files:
-            existing = {p["path"] for p in self.model.pdfs}
-            new_files = [f for f in files if f not in existing]
-            if new_files:
-                self.model.pdfs.extend(self.pdf_service.add_pdfs(new_files))
-                self.view.show_pdf_window(self.model.pdfs)
-                self._auto_save()
+        if not files:
+            return
+        existing = {p["path"] for p in self.model.pdfs}
+        new_files = [f for f in files if f not in existing]
+        if not new_files:
+            return
+        if self._pdf_worker and self._pdf_worker.isRunning():
+            return
+        self._pdf_worker = _PDFWorker(self.pdf_service, new_files)
+        self._pdf_worker.progress.connect(
+            lambda i, t: self.view.show_pdf_loading(i, t),
+            Qt.ConnectionType.QueuedConnection
+        )
+        self._pdf_worker.finished.connect(self._on_pdfs_loaded, Qt.ConnectionType.QueuedConnection)
+        self._pdf_worker.start()
+
+    def _on_pdfs_loaded(self, new_pdfs: list):
+        self.view.show_pdf_loading(1, 1)  # hide bar
+        self.model.pdfs.extend(new_pdfs)
+        self.view.show_pdf_window(self.model.pdfs)
+        self._auto_save()
 
     def export_diagnosis(self):
         if not self.model.diagnosis:

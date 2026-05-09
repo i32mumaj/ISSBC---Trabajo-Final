@@ -13,9 +13,12 @@ def _format_size(n: int) -> str:
 
 class PDFService:
 
-    def add_pdfs(self, paths: list) -> list:
+    def add_pdfs(self, paths: list, on_progress=None) -> list:
         pdfs = []
-        for p in paths:
+        total = len(paths)
+        for i, p in enumerate(paths):
+            if on_progress:
+                on_progress(i, total)
             path = Path(p)
             text_by_page: list[str] = []
             page_count = 0
@@ -41,4 +44,6 @@ class PDFService:
                 "text_by_page": text_by_page,
                 "excerpt": excerpt,
             })
+        if on_progress:
+            on_progress(total, total)
         return pdfs
