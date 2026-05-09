@@ -1224,6 +1224,13 @@ class PdfTray(QFrame):
         header_row.addWidget(self._del_btn)
         lay.addLayout(header_row)
 
+        # Search bar
+        self._search = QLineEdit()
+        self._search.setPlaceholderText("Buscar documento…")
+        self._search.setFixedHeight(26)
+        self._search.textChanged.connect(self._filter_list)
+        lay.addWidget(self._search)
+
         # PDF list
         self._list = QListWidget()
         self._list.setIconSize(QPixmap(20, 26).size())
@@ -1353,6 +1360,12 @@ class PdfTray(QFrame):
             self._list.addItem(item)
         if pdfs:
             self._list.setCurrentRow(0)
+
+    def _filter_list(self, query: str):
+        query = query.strip().lower()
+        for i in range(self._list.count()):
+            item = self._list.item(i)
+            item.setHidden(query != "" and query not in item.text().lower())
 
     def dragEnterEvent(self, event):
         if event.mimeData().hasUrls():
