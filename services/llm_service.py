@@ -160,7 +160,9 @@ class LLMService:
             system += f"\n\nResumen del caso:\n{case_text}"
         if pdfs:
             system += _build_pdf_context(pdfs)
-        ollama_msgs = [{"role": "system", "content": system}] + messages
+        ollama_msgs = [{"role": "system", "content": system}] + [
+            {"role": m["role"], "content": m["content"]} for m in messages
+        ]
         if on_token is not None:
             full = ""
             for chunk in ollama.chat(model=MODEL, messages=ollama_msgs, stream=True):

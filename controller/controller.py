@@ -130,7 +130,7 @@ class Controller(QObject):
 
         self.view.clear_chat()
         for msg in self.model.chat_history:
-            self.view.add_chat_message(msg["role"], msg["content"])
+            self.view.add_chat_message(msg["role"], msg["content"], timestamp=msg.get("timestamp", "—"))
         if self.model.symptoms:
             self.view.set_editor_text("\n".join(self.model.symptoms))
         self.view.clear_results()
@@ -194,6 +194,7 @@ class Controller(QObject):
             })
             self.view.show_hypotheses(hyps)
             self.view.show_diagnosis(diag)
+            self.view.set_pdf_count(len(self.model.pdfs))
             self._auto_save()
 
             sev_icons = {"high": "● ALTO", "medium": "◐ MEDIO", "low": "○ BAJO"}
@@ -220,12 +221,13 @@ class Controller(QObject):
 
         elif kind == "chat":
             self._stream_text = ""
+            ts = datetime.now().strftime("%H:%M")
             if self._typing_bubble:
                 self._typing_bubble.set_content(result)
                 self._typing_bubble = None
             else:
-                self.view.add_chat_message("assistant", result)
-            self.model.chat_history.append({"role": "assistant", "content": result})
+                self.view.add_chat_message("assistant", result, timestamp=ts)
+            self.model.chat_history.append({"role": "assistant", "content": result, "timestamp": ts})
             self._auto_save()
 
         self.view.set_running(False)
@@ -242,8 +244,9 @@ class Controller(QObject):
     # ── Other actions ─────────────────────────────────────────
 
     def send_chat(self, text: str):
-        self.view.add_chat_message("user", text)
-        self.model.chat_history.append({"role": "user", "content": text})
+        ts = datetime.now().strftime("%H:%M")
+        self.view.add_chat_message("user", text, timestamp=ts)
+        self.model.chat_history.append({"role": "user", "content": text, "timestamp": ts})
         case_text = "\n".join(self.view.get_symptoms())
         pdfs = list(self.model.pdfs)
         history = list(self.model.chat_history)

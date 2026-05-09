@@ -336,6 +336,17 @@ def build_pdf_icon():
 
 # ── Custom widgets ────────────────────────────────────────────────────────────
 
+class ElidedLabel(QLabel):
+    """QLabel that elides text with '…' without triggering resize loops."""
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        metrics = painter.fontMetrics()
+        elided = metrics.elidedText(self.text(), Qt.TextElideMode.ElideRight, self.width())
+        painter.setPen(self.palette().color(self.foregroundRole()))
+        painter.drawText(self.rect(), int(self.alignment()), elided)
+
+
 class SeverityPill(QFrame):
     """Colored dot + label pill for severity levels."""
 
@@ -457,6 +468,51 @@ class HypothesisRow(QFrame):
         lay.addWidget(score_lbl)
 
 
+class HypothesisBar(QFrame):
+    """Full-width horizontal bar chart row for a hypothesis."""
+
+    def __init__(self, hyp, theme, parent=None):
+        super().__init__(parent)
+        c = severity_color(theme, hyp.get("severity", "medium"))
+        pct = int(hyp.get("score", 0) * 100)
+
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(0, 4, 0, 4)
+        lay.setSpacing(4)
+
+        top = QHBoxLayout()
+        top.setSpacing(6)
+        name_lbl = QLabel(hyp.get("name", ""))
+        name_lbl.setStyleSheet("font-size: 12px; font-weight: 500; background: transparent;")
+        name_lbl.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        top.addWidget(name_lbl, 1)
+
+        pct_lbl = QLabel(f"{pct}%")
+        pct_lbl.setStyleSheet(
+            f"color: {c}; font-size: 11px; font-weight: 600; background: transparent;"
+            f" font-family: 'JetBrains Mono', 'Consolas', monospace;"
+        )
+        top.addWidget(pct_lbl)
+        lay.addLayout(top)
+
+        bar_bg = QFrame()
+        bar_bg.setFixedHeight(6)
+        bar_bg.setStyleSheet(f"background-color: {theme['border']}; border-radius: 3px;")
+        bar_fill = QFrame(bar_bg)
+        bar_fill.setFixedHeight(6)
+        bar_fill.setStyleSheet(f"background-color: {c}; border-radius: 3px;")
+        bar_fill.setFixedWidth(0)
+        self._bar_fill = bar_fill
+        self._pct = pct
+        lay.addWidget(bar_bg)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        total = self.width()
+        if total > 0 and hasattr(self, "_bar_fill"):
+            self._bar_fill.setFixedWidth(max(0, int(total * self._pct / 100)))
+
+
 class CitationRow(QFrame):
     """Compact single-line citation row."""
 
@@ -468,13 +524,13 @@ class CitationRow(QFrame):
         lay.setSpacing(6)
 
         doc_name = citation.get("doc", citation.get("label", citation.get("name", "")))
-        name_lbl = QLabel(doc_name)
-        name_lbl.setStyleSheet(
+        self._name_lbl = ElidedLabel(doc_name)
+        self._name_lbl.setStyleSheet(
             f"font-size: 11px; color: {theme['accent_text']}; background: transparent;"
         )
-        name_lbl.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
-        name_lbl.setMinimumWidth(0)
-        lay.addWidget(name_lbl, 1)
+        self._name_lbl.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        self._name_lbl.setMinimumWidth(0)
+        lay.addWidget(self._name_lbl, 1)
 
         page = citation.get("page")
         if page is not None:
@@ -482,7 +538,6 @@ class CitationRow(QFrame):
             page_lbl.setObjectName("mono")
             page_lbl.setFixedWidth(28)
             lay.addWidget(page_lbl)
-
 
 class TimelineStep(QFrame):
     """Single step in the analysis timeline."""
@@ -716,17 +771,20 @@ class ResultsPane(QWidget):
         self._severity = ""
         self._on_justify = None
         self._on_export = None
+        self._diagnosis_data = {}
+        self._hypotheses_data = []
 
         outer = QVBoxLayout(self)
-        outer.setContentsMargins(0, 0, 20, 0)
+        outer.setContentsMargins(0, 0, 0, 0)
         outer.setSpacing(0)
 
         self._scroll = QScrollArea()
         self._scroll.setWidgetResizable(True)
         self._scroll.setFrameShape(QFrame.Shape.NoFrame)
         self._scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self._scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self._container = QWidget()
-        self._container.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Maximum)
+        self._container.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         self._lay = QVBoxLayout(self._container)
         self._lay.setContentsMargins(0, 0, 0, 0)
         self._lay.setSpacing(0)
@@ -734,6 +792,12 @@ class ResultsPane(QWidget):
         outer.addWidget(self._scroll)
 
         self._build_empty()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        vw = self._scroll.viewport().width()
+        if vw > 0:
+            self._container.setMaximumWidth(vw)
 
     def _build_empty(self):
         t = self._theme
@@ -746,7 +810,7 @@ class ResultsPane(QWidget):
             "QFrame#card { border-radius: 0; border-left: none; border-right: none; border-top: none; }"
         )
         sh_lay = QVBoxLayout(self._severity_header)
-        sh_lay.setContentsMargins(16, 14, 24, 14)
+        sh_lay.setContentsMargins(16, 14, 16, 14)
         sh_lay.setSpacing(8)
 
         top_row = QHBoxLayout()
@@ -767,16 +831,36 @@ class ResultsPane(QWidget):
         self._severity_meter = SeverityMeter()
         sh_lay.addWidget(self._severity_meter)
 
+        meta_row = QHBoxLayout()
+        meta_row.setSpacing(8)
+        self._confidence_lbl = QLabel()
+        self._confidence_lbl.setObjectName("mono")
+        self._confidence_lbl.setStyleSheet("font-size: 10px;")
+        self._confidence_lbl.hide()
+        meta_row.addWidget(self._confidence_lbl)
+        self._pdf_badge = QLabel()
+        self._pdf_badge.setObjectName("mono")
+        self._pdf_badge.setStyleSheet("font-size: 10px;")
+        self._pdf_badge.hide()
+        meta_row.addWidget(self._pdf_badge)
+        meta_row.addStretch()
+        sh_lay.addLayout(meta_row)
+
         btn_row = QHBoxLayout()
         btn_row.setSpacing(6)
         self._just_btn = QPushButton("Justificación")
         self._just_btn.setObjectName("soft")
         self._just_btn.setFixedHeight(26)
         self._just_btn.clicked.connect(lambda: self._on_justify() if self._on_justify else None)
+        self._copy_diag_btn = QPushButton("Copiar")
+        self._copy_diag_btn.setObjectName("ghost")
+        self._copy_diag_btn.setFixedHeight(26)
+        self._copy_diag_btn.clicked.connect(self._copy_summary)
         self._export_btn = QPushButton("Exportar")
         self._export_btn.setObjectName("ghost")
         self._export_btn.setFixedHeight(26)
         btn_row.addWidget(self._just_btn)
+        btn_row.addWidget(self._copy_diag_btn)
         btn_row.addWidget(self._export_btn)
         btn_row.addStretch()
         sh_lay.addLayout(btn_row)
@@ -785,7 +869,7 @@ class ResultsPane(QWidget):
         # Hypotheses section
         self._hyp_section = QFrame()
         hyp_lay = QVBoxLayout(self._hyp_section)
-        hyp_lay.setContentsMargins(16, 12, 24, 4)
+        hyp_lay.setContentsMargins(16, 12, 16, 4)
         hyp_lay.setSpacing(8)
 
         hyp_header = QLabel("HIPÓTESIS")
@@ -804,7 +888,7 @@ class ResultsPane(QWidget):
         # Citations section
         self._cit_section = QFrame()
         cit_lay = QVBoxLayout(self._cit_section)
-        cit_lay.setContentsMargins(16, 4, 24, 14)
+        cit_lay.setContentsMargins(16, 4, 16, 14)
         cit_lay.setSpacing(6)
 
         self._cit_header = QLabel("CITAS")
@@ -821,20 +905,63 @@ class ResultsPane(QWidget):
         lay.addWidget(self._cit_section)
         lay.addStretch()
 
+    def set_pdf_count(self, n: int):
+        if n > 0:
+            self._pdf_badge.setText(f"📄 {n} doc{'s' if n != 1 else ''}")
+            self._pdf_badge.show()
+        else:
+            self._pdf_badge.hide()
+
     def set_on_justify(self, cb):
         self._on_justify = cb
 
     def set_on_export(self, cb):
         self._export_btn.clicked.connect(cb)
 
+    def _copy_summary(self):
+        d = self._diagnosis_data
+        if not d:
+            return
+        sev_map = {"high": "ALTO", "medium": "MEDIO", "low": "BAJO"}
+        lines = [
+            f"DIAGNÓSTICO: {d.get('diagnosis', '')}",
+            f"Severidad: {sev_map.get(d.get('severity', ''), '—')}",
+        ]
+        if d.get("summary"):
+            lines += ["", d["summary"]]
+        if self._hypotheses_data:
+            lines += ["", "Hipótesis:"]
+            for h in sorted(self._hypotheses_data, key=lambda x: x.get("score", 0), reverse=True):
+                pct = int(h.get("score", 0) * 100)
+                lines.append(f"  • {h.get('name', '')} — {pct}%")
+        QGuiApplication.clipboard().setText("\n".join(lines))
+        self._copy_diag_btn.setText("Copiado")
+        QTimer.singleShot(1500, lambda: self._copy_diag_btn.setText("Copiar"))
+
+    def _update_confidence(self):
+        if not self._hypotheses_data:
+            self._confidence_lbl.hide()
+            return
+        avg = sum(h.get("score", 0) for h in self._hypotheses_data) / len(self._hypotheses_data)
+        pct = int(avg * 100)
+        t = self._theme
+        color = t["success"] if pct >= 70 else t["warn"] if pct >= 40 else t["danger"]
+        self._confidence_lbl.setText(f"{pct}% conf.")
+        self._confidence_lbl.setStyleSheet(
+            f"font-size: 10px; color: {color}; background: transparent;"
+        )
+        self._confidence_lbl.show()
+
     def update_theme(self, theme):
         self._theme = theme
         if self._severity:
             self._pill.set_severity(self._severity, theme)
             self._severity_meter.set_severity(self._severity, theme)
+        self._update_confidence()
 
     def update_hypotheses(self, hypotheses):
         t = self._theme
+        self._hypotheses_data = hypotheses or []
         while self._hyp_rows_lay.count():
             item = self._hyp_rows_lay.takeAt(0)
             if item.widget():
@@ -842,19 +969,20 @@ class ResultsPane(QWidget):
         if hypotheses:
             self._hyp_placeholder.hide()
             sorted_hyps = sorted(hypotheses, key=lambda h: h.get("score", 0), reverse=True)
-            count_lbl = self._hyp_section.findChild(QLabel, "hyp_count")
             header_lbl = self._hyp_section.layout().itemAt(0).widget()
             if header_lbl:
                 header_lbl.setText(f"HIPÓTESIS · {len(hypotheses)}")
             for h in sorted_hyps:
-                row = HypothesisRow(h, t)
+                row = HypothesisBar(h, t)
                 self._hyp_rows_lay.addWidget(row)
         else:
             self._hyp_placeholder.show()
             self._hyp_placeholder.setText("—")
+        self._update_confidence()
 
     def update_diagnosis(self, diagnosis_data):
         t = self._theme
+        self._diagnosis_data = diagnosis_data
         severity = diagnosis_data.get("severity", "medium")
         self._severity = severity
         self._pill.set_severity(severity, t)
@@ -1475,7 +1603,7 @@ def _md_to_html(text: str) -> str:
 
 
 class ChatBubble(QFrame):
-    def __init__(self, role: str, content: str, theme: dict = None, parent=None):
+    def __init__(self, role: str, content: str, theme: dict = None, timestamp: str = None, parent=None):
         super().__init__(parent)
         self._role = role
         self._raw_content = content
@@ -1498,7 +1626,8 @@ class ChatBubble(QFrame):
         header.addWidget(role_lbl)
 
         from datetime import datetime as _dt
-        ts = QLabel(_dt.now().strftime("%H:%M"))
+        ts_text = timestamp if timestamp is not None else _dt.now().strftime("%H:%M")
+        ts = QLabel(ts_text)
         ts.setObjectName("mono")
         ts.setStyleSheet("font-size: 9.5px; background: transparent; border: none;")
         header.addWidget(ts)
@@ -1886,9 +2015,9 @@ class MainWindow(QMainWindow):
     def on_chat_send(self, callback):
         self._chat_send_cb = callback
 
-    def add_chat_message(self, role: str, content: str) -> "ChatBubble":
+    def add_chat_message(self, role: str, content: str, timestamp: str = None) -> "ChatBubble":
         theme = DARK_THEME if self.is_dark_mode else LIGHT_THEME
-        bubble = ChatBubble(role, content, theme)
+        bubble = ChatBubble(role, content, theme, timestamp=timestamp)
         count = self._chat_lay.count()
         self._chat_lay.insertWidget(count - 1, bubble)
         self._scroll_chat_bottom()
@@ -2026,6 +2155,9 @@ class MainWindow(QMainWindow):
             data = diagnosis
         self._results.update_diagnosis(data)
         self.reveal_results_pane()
+
+    def set_pdf_count(self, n: int):
+        self._results.set_pdf_count(n)
 
     def show_justification(self, justification):
         theme = DARK_THEME if self.is_dark_mode else LIGHT_THEME
