@@ -1444,8 +1444,17 @@ class PDFWindow(QDialog):
         pcc.addLayout(overlay)
         pcc.addWidget(self.preview_scroll)
 
+        # Grid view
+        self.grid_scroll = QScrollArea()
+        self.grid_scroll.setWidgetResizable(True)
+        self.grid_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self.grid_widget = QWidget()
+        self.grid_lay = None
+        self.grid_scroll.setWidget(self.grid_widget)
+
         if PDF_PREVIEW_AVAILABLE:
             self.preview_stack.addWidget(self.preview_container)
+            self.preview_stack.addWidget(self.grid_scroll)
 
         self.splitter.addWidget(self.list_widget)
         self.splitter.addWidget(self.preview_stack)
@@ -1473,7 +1482,14 @@ class PDFWindow(QDialog):
         nav.addWidget(self.zoom_lbl)
         nav.addWidget(self.zoom_in_btn)
         nav.addStretch()
+        self.grid_btn = QPushButton("⊞ Grid")
+        self.grid_btn.setObjectName("ghost")
+        self.grid_btn.setFixedHeight(28)
+        self.grid_btn.setCheckable(True)
+        self.grid_btn.clicked.connect(self._toggle_grid)
+        nav.addWidget(self.grid_btn)
         lay.addLayout(nav)
+        self._grid_mode = False
 
         btns = QHBoxLayout()
         self.add_btn = QPushButton("Añadir PDFs")
@@ -1495,6 +1511,70 @@ class PDFWindow(QDialog):
         self.next_btn.clicked.connect(lambda: self.change_page(1))
         self.zoom_out_btn.clicked.connect(lambda: self.change_zoom(-0.1))
         self.zoom_in_btn.clicked.connect(lambda: self.change_zoom(0.1))
+
+    def _toggle_grid(self, checked):
+        self._grid_mode = checked
+        self.grid_btn.setText("☰ Página" if checked else "⊞ Grid")
+        for b in (self.prev_btn, self.next_btn, self.zoom_out_btn, self.zoom_in_btn):
+            b.setEnabled(not checked)
+        if checked:
+            self._build_grid()
+        else:
+            if self.current_pdf_path:
+                self.preview_stack.setCurrentWidget(self.preview_container)
+
+    def _build_grid(self):
+        if not self.current_pdf_path or not PDF_PREVIEW_AVAILABLE:
+            return
+        # Clear old grid
+        old = self.grid_widget.layout()
+        if old:
+            while old.count():
+                item = old.takeAt(0)
+                if item.widget():
+                    item.widget().deleteLater()
+            import sip
+            try:
+                sip.delete(old)
+            except Exception:
+                pass
+        from PyQt6.QtWidgets import QGridLayout
+        grid = QGridLayout(self.grid_widget)
+        grid.setSpacing(8)
+        grid.setContentsMargins(12, 12, 12, 12)
+        self.grid_lay = grid
+        cols = 4
+        thumb_w = 140
+        try:
+            doc = fitz.open(self.current_pdf_path)
+            for i in range(doc.page_count):
+                page = doc.load_page(i)
+                scale = thumb_w / page.rect.width
+                mat = fitz.Matrix(scale, scale)
+                pix = page.get_pixmap(matrix=mat, alpha=False)
+                img = QImage(pix.samples, pix.width, pix.height,
+                             pix.stride, QImage.Format.Format_RGB888).copy()
+                pm = QPixmap.fromImage(img)
+                btn = QPushButton()
+                btn.setIcon(QIcon(pm))
+                btn.setIconSize(pm.size())
+                btn.setFixedSize(pm.width() + 8, pm.height() + 24)
+                btn.setText(f"  {i + 1}")
+                btn.setObjectName("ghost")
+                btn.setStyleSheet("QPushButton { text-align: center; font-size: 10px; padding-top: 2px; }")
+                page_idx = i
+                btn.clicked.connect(lambda _, p=page_idx: self._jump_to_page(p))
+                grid.addWidget(btn, i // cols, i % cols)
+            doc.close()
+        except Exception:
+            pass
+        self.preview_stack.setCurrentWidget(self.grid_scroll)
+
+    def _jump_to_page(self, idx):
+        self.grid_btn.setChecked(False)
+        self._toggle_grid(False)
+        self.current_page = idx
+        self.render_page(idx)
 
     def update_theme(self, is_dark):
         self.is_dark_mode = is_dark
