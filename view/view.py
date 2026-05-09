@@ -336,6 +336,17 @@ def build_pdf_icon():
 
 # ── Custom widgets ────────────────────────────────────────────────────────────
 
+class ElidedLabel(QLabel):
+    """QLabel that elides text with '…' without triggering resize loops."""
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        metrics = painter.fontMetrics()
+        elided = metrics.elidedText(self.text(), Qt.TextElideMode.ElideRight, self.width())
+        painter.setPen(self.palette().color(self.foregroundRole()))
+        painter.drawText(self.rect(), int(self.alignment()), elided)
+
+
 class SeverityPill(QFrame):
     """Colored dot + label pill for severity levels."""
 
@@ -512,8 +523,8 @@ class CitationRow(QFrame):
         lay.setContentsMargins(0, 0, 0, 0)
         lay.setSpacing(6)
 
-        self._full_name = citation.get("doc", citation.get("label", citation.get("name", "")))
-        self._name_lbl = QLabel(self._full_name)
+        doc_name = citation.get("doc", citation.get("label", citation.get("name", "")))
+        self._name_lbl = ElidedLabel(doc_name)
         self._name_lbl.setStyleSheet(
             f"font-size: 11px; color: {theme['accent_text']}; background: transparent;"
         )
@@ -527,13 +538,6 @@ class CitationRow(QFrame):
             page_lbl.setObjectName("mono")
             page_lbl.setFixedWidth(28)
             lay.addWidget(page_lbl)
-
-    def resizeEvent(self, event):
-        super().resizeEvent(event)
-        fm = self._name_lbl.fontMetrics()
-        elided = fm.elidedText(self._full_name, Qt.TextElideMode.ElideRight, self._name_lbl.width())
-        self._name_lbl.setText(elided)
-
 
 class TimelineStep(QFrame):
     """Single step in the analysis timeline."""
