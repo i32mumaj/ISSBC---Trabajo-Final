@@ -1838,13 +1838,19 @@ class MainWindow(QMainWindow):
         cmd_lay.setContentsMargins(16, 0, 16, 0)
         cmd_lay.setSpacing(10)
 
-        # Title + date stacked vertically on the left
+        # Editable title + date stacked vertically on the left
         title_col = QVBoxLayout()
         title_col.setSpacing(1)
         title_col.setContentsMargins(0, 0, 0, 0)
-        title_lbl = QLabel("Diagnóstico legal")
-        title_lbl.setStyleSheet("font-size: 13px; font-weight: 700;")
-        title_col.addWidget(title_lbl)
+        self._title_edit = QLineEdit("Caso sin título")
+        self._title_edit.setStyleSheet(
+            "QLineEdit { font-size: 13px; font-weight: 700; border: none;"
+            " background: transparent; padding: 0; }"
+            "QLineEdit:focus { border-bottom: 1px solid palette(highlight); }"
+        )
+        self._title_edit.setFixedHeight(18)
+        self._title_edit.setMaximumWidth(220)
+        title_col.addWidget(self._title_edit)
         today = _date.today()
         months = ["ene","feb","mar","abr","may","jun","jul","ago","sep","oct","nov","dic"]
         date_str = f"{today.day} {months[today.month - 1]} {today.year}"
@@ -2291,6 +2297,15 @@ class MainWindow(QMainWindow):
         bar.setRange(0, total)
         bar.setValue(current)
         bar.show()
+
+    def get_case_title(self) -> str:
+        return self._title_edit.text().strip() or "Caso sin título"
+
+    def set_case_title(self, title: str):
+        self._title_edit.setText(title or "Caso sin título")
+
+    def on_title_changed(self, callback):
+        self._title_edit.textChanged.connect(callback)
 
     def get_symptoms(self):
         return [line for line in self._editor.toPlainText().split("\n") if line.strip()]

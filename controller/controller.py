@@ -75,6 +75,7 @@ class Controller(QObject):
         self.view.on_export_clicked(self.export_diagnosis)
         self.view.on_new_chat(self.new_chat)
         self.view.on_conv_selected(self.load_conversation)
+        self.view.on_title_changed(self._on_title_changed)
 
     # ── Session / conversations ───────────────────────────────
 
@@ -84,6 +85,9 @@ class Controller(QObject):
         if convs:
             # Load the most recent conversation silently
             self._load_conv_data(convs[0]["id"], update_list=False)
+
+    def _on_title_changed(self, text: str):
+        self._pending_name = text.strip() or "Caso sin título"
 
     def _auto_save(self):
         if not self.model.current_conv_id:
@@ -147,6 +151,8 @@ class Controller(QObject):
         self.model.pdfs = self.pdf_service.add_pdfs(pdf_paths) if pdf_paths else []
         self.view.show_pdf_window(self.model.pdfs)
 
+        self._pending_name = data.get("name", "Caso sin título")
+        self.view.set_case_title(self._pending_name)
         self.view.clear_chat()
         for msg in self.model.chat_history:
             self.view.add_chat_message(msg["role"], msg["content"], timestamp=msg.get("timestamp", "—"))
