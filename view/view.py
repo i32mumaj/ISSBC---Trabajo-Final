@@ -1626,7 +1626,7 @@ class ChatBubble(QFrame):
         header.addWidget(role_lbl)
 
         from datetime import datetime as _dt
-        ts_text = timestamp if timestamp else _dt.now().strftime("%H:%M")
+        ts_text = timestamp if timestamp is not None else _dt.now().strftime("%H:%M")
         ts = QLabel(ts_text)
         ts.setObjectName("mono")
         ts.setStyleSheet("font-size: 9.5px; background: transparent; border: none;")

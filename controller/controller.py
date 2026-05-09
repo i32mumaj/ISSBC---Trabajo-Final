@@ -130,7 +130,7 @@ class Controller(QObject):
 
         self.view.clear_chat()
         for msg in self.model.chat_history:
-            self.view.add_chat_message(msg["role"], msg["content"], timestamp=msg.get("timestamp"))
+            self.view.add_chat_message(msg["role"], msg["content"], timestamp=msg.get("timestamp", "—"))
         if self.model.symptoms:
             self.view.set_editor_text("\n".join(self.model.symptoms))
         self.view.clear_results()
