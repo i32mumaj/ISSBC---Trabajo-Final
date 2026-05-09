@@ -78,11 +78,6 @@ class Controller(QObject):
         self.view.on_new_chat(self.new_chat)
         self.view.on_conv_selected(self.load_conversation)
         self.view.on_title_changed(self._on_title_changed)
-        self.view.on_tab_switched(self.load_conversation)
-        self.view.on_tab_closed(self._close_tab)
-        self.view._new_chat_cb = self.new_chat
-        self._open_tabs: list[str] = []
-
     # ── Session / conversations ───────────────────────────────
 
     def _restore_session(self):
@@ -93,27 +88,9 @@ class Controller(QObject):
         else:
             cid = new_conv_id()
             self.model.current_conv_id = cid
-            self._ensure_tab(cid, "Caso sin título")
 
     def _on_title_changed(self, text: str):
-        title = text.strip() or "Caso sin título"
-        self._pending_name = title
-        if self.model.current_conv_id:
-            self.view.update_tab_title(self.model.current_conv_id, title)
-
-    def _ensure_tab(self, conv_id: str, title: str):
-        if conv_id not in self._open_tabs:
-            self._open_tabs.append(conv_id)
-            self.view.add_tab(conv_id, title[:28] + "…" if len(title) > 28 else title)
-
-    def _close_tab(self, conv_id: str):
-        if conv_id in self._open_tabs:
-            self._open_tabs.remove(conv_id)
-        self.view.remove_tab(conv_id)
-        if self._open_tabs:
-            self.load_conversation(self._open_tabs[-1])
-        else:
-            self.new_chat("Caso sin título")
+        self._pending_name = text.strip() or "Caso sin título"
 
     def _auto_save(self):
         if not self.model.current_conv_id:
@@ -146,8 +123,6 @@ class Controller(QObject):
         self.model.pdfs = []
         self._pending_name = name.strip() or "Sin título"
         self._auto_save()
-        self._ensure_tab(self.model.current_conv_id, self._pending_name)
-        self.view.set_active_tab(self.model.current_conv_id)
         self.view.clear_chat()
         self.view.clear_results()
         self.view.set_editor_text("")
@@ -181,8 +156,6 @@ class Controller(QObject):
 
         self._pending_name = data.get("name", "Caso sin título")
         self.view.set_case_title(self._pending_name)
-        self._ensure_tab(conv_id, self._pending_name)
-        self.view.set_active_tab(conv_id)
         self.view.clear_chat()
         for msg in self.model.chat_history:
             self.view.add_chat_message(msg["role"], msg["content"], timestamp=msg.get("timestamp", "—"))

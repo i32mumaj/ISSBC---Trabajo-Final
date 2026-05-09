@@ -2,7 +2,7 @@ from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
     QListWidget, QLabel, QTextEdit, QFileDialog, QDialog, QFrame, QSizePolicy,
     QListWidgetItem, QStackedWidget, QSplitter, QScrollArea, QProgressBar,
-    QScrollBar, QLineEdit, QAbstractScrollArea, QTabBar
+    QScrollBar, QLineEdit, QAbstractScrollArea
 )
 from datetime import date as _date
 from PyQt6.QtCore import Qt, QTimer, QPropertyAnimation, QEasingCurve, QRect
@@ -271,22 +271,6 @@ def get_stylesheet(theme):
         }}
         QTabWidget::pane {{
             border: none;
-        }}
-        QTabBar::tab {{
-            background: {theme['surface2']};
-            color: {theme['text_muted']};
-            border: none;
-            padding: 6px 14px;
-            font-size: 12px;
-        }}
-        QTabBar::tab:selected {{
-            background: {theme['canvas']};
-            color: {theme['text']};
-            font-weight: 600;
-            border-bottom: 2px solid {theme['accent']};
-        }}
-        QTabBar::tab:hover:!selected {{
-            background: {theme['border']};
         }}
         QStatusBar {{
             background-color: {theme['canvas']};
@@ -1882,13 +1866,13 @@ class MainWindow(QMainWindow):
 
         self._save_btn = QPushButton("↓ Guardar")
         self._save_btn.setObjectName("ghost")
-        self._save_btn.setFixedHeight(32)
+        self._save_btn.setFixedSize(110, 34)
         self._save_btn.setToolTip("Guardar caso como .issbc")
         cmd_lay.addWidget(self._save_btn)
 
         self._load_btn = QPushButton("↑ Abrir")
         self._load_btn.setObjectName("ghost")
-        self._load_btn.setFixedHeight(32)
+        self._load_btn.setFixedSize(110, 34)
         self._load_btn.setToolTip("Abrir caso .issbc")
         cmd_lay.addWidget(self._load_btn)
 
@@ -1905,33 +1889,6 @@ class MainWindow(QMainWindow):
         cmd_lay.addWidget(self._diag_btn)
 
         root_lay.addWidget(self._cmd_bar)
-
-        # ── Tab bar ──────────────────────────────────────────────
-        self._tab_bar = QTabBar()
-        self._tab_bar.setTabsClosable(True)
-        self._tab_bar.setMovable(False)
-        self._tab_bar.setExpanding(False)
-        self._tab_bar.tabCloseRequested.connect(self._on_tab_close)
-        self._tab_bar.currentChanged.connect(self._on_tab_changed)
-        self._tab_bar.setFixedHeight(32)
-        self._tab_cb = None
-        self._tab_close_cb = None
-        self._tab_switching = False
-
-        tab_row = QWidget()
-        tab_row_lay = QHBoxLayout(tab_row)
-        tab_row_lay.setContentsMargins(8, 0, 8, 0)
-        tab_row_lay.setSpacing(0)
-        tab_row_lay.addWidget(self._tab_bar)
-        new_tab_btn = QPushButton("+")
-        new_tab_btn.setObjectName("ghost")
-        new_tab_btn.setFixedSize(28, 28)
-        new_tab_btn.setToolTip("Nuevo caso")
-        new_tab_btn.clicked.connect(self._on_new_tab)
-        self._new_tab_btn = new_tab_btn
-        tab_row_lay.addWidget(new_tab_btn)
-        tab_row_lay.addStretch()
-        root_lay.addWidget(tab_row)
 
         # ── Body (content area with 3-pane splitter + drawers) ──
         self._content_area = ContentArea()
@@ -2136,59 +2093,6 @@ class MainWindow(QMainWindow):
             self._just_drawer.close_drawer()
         if self._conv_overlay.is_open():
             self._conv_overlay.hide_overlay()
-
-    # ── Tab bar ────────────────────────────────────────────────
-
-    def _on_tab_changed(self, idx):
-        if self._tab_switching or idx < 0:
-            return
-        conv_id = self._tab_bar.tabData(idx)
-        if conv_id and self._tab_cb:
-            self._tab_cb(conv_id)
-
-    def _on_tab_close(self, idx):
-        conv_id = self._tab_bar.tabData(idx)
-        if self._tab_close_cb and conv_id:
-            self._tab_close_cb(conv_id)
-
-    def _on_new_tab(self):
-        if hasattr(self, '_new_chat_cb') and self._new_chat_cb:
-            self._new_chat_cb("Caso sin título")
-
-    def on_tab_switched(self, callback):
-        self._tab_cb = callback
-
-    def on_tab_closed(self, callback):
-        self._tab_close_cb = callback
-
-    def add_tab(self, conv_id: str, title: str) -> int:
-        self._tab_switching = True
-        idx = self._tab_bar.addTab(title)
-        self._tab_bar.setTabData(idx, conv_id)
-        self._tab_switching = False
-        return idx
-
-    def set_active_tab(self, conv_id: str):
-        self._tab_switching = True
-        for i in range(self._tab_bar.count()):
-            if self._tab_bar.tabData(i) == conv_id:
-                self._tab_bar.setCurrentIndex(i)
-                break
-        self._tab_switching = False
-
-    def update_tab_title(self, conv_id: str, title: str):
-        for i in range(self._tab_bar.count()):
-            if self._tab_bar.tabData(i) == conv_id:
-                self._tab_bar.setTabText(i, title[:28] + "…" if len(title) > 28 else title)
-                break
-
-    def remove_tab(self, conv_id: str):
-        self._tab_switching = True
-        for i in range(self._tab_bar.count()):
-            if self._tab_bar.tabData(i) == conv_id:
-                self._tab_bar.removeTab(i)
-                break
-        self._tab_switching = False
 
     def _show_shortcuts(self):
         from PyQt6.QtWidgets import QDialog, QTableWidget, QTableWidgetItem, QHeaderView
