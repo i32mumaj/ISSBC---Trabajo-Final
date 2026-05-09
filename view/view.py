@@ -1186,6 +1186,7 @@ class PdfTray(QFrame):
         self._theme = theme
         self._pdfs = []
         self._add_cb = None
+        self._remove_cb = None
         self._pdf_dblclick_cb = None
 
         lay = QVBoxLayout(self)
@@ -1213,6 +1214,14 @@ class PdfTray(QFrame):
         )
         self._add_btn.clicked.connect(self._on_add)
         header_row.addWidget(self._add_btn)
+
+        self._del_btn = QPushButton("✕")
+        self._del_btn.setObjectName("icon_btn")
+        self._del_btn.setFixedSize(22, 22)
+        self._del_btn.setToolTip("Eliminar PDF seleccionado")
+        self._del_btn.setEnabled(False)
+        self._del_btn.clicked.connect(self._on_delete)
+        header_row.addWidget(self._del_btn)
         lay.addLayout(header_row)
 
         # PDF list
@@ -1255,9 +1264,15 @@ class PdfTray(QFrame):
         lay.addWidget(self._preview_card, 1)
 
         self._list.currentItemChanged.connect(self._on_selection_changed)
+        self._list.currentItemChanged.connect(
+            lambda cur, _: self._del_btn.setEnabled(cur is not None)
+        )
 
     def set_add_callback(self, cb):
         self._add_cb = cb
+
+    def set_remove_callback(self, cb):
+        self._remove_cb = cb
 
     def set_menu_callback(self, cb):
         self._menu_btn.clicked.connect(cb)
@@ -1268,6 +1283,14 @@ class PdfTray(QFrame):
     def _on_add(self):
         if self._add_cb:
             self._add_cb()
+
+    def _on_delete(self):
+        idx = self._list.currentRow()
+        if idx < 0 or idx >= len(self._pdfs):
+            return
+        path = self._pdfs[idx].get("path", "")
+        if hasattr(self, "_remove_cb") and self._remove_cb:
+            self._remove_cb(path)
 
     def _on_double_click(self, item):
         if self._pdf_dblclick_cb:
@@ -2138,6 +2161,9 @@ class MainWindow(QMainWindow):
             except Exception:
                 pass
             self._pw.add_btn.clicked.connect(callback)
+
+    def on_pdf_remove_clicked(self, callback):
+        self._pdf_tray.set_remove_callback(callback)
 
     def get_symptoms(self):
         return [line for line in self._editor.toPlainText().split("\n") if line.strip()]

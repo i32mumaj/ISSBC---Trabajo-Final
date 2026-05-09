@@ -53,6 +53,7 @@ class Controller(QObject):
         self.view.on_chat_send(self.send_chat)
         self.view.on_pdf_clicked(self.open_pdf_manager)
         self.view.on_pdf_add_clicked(self.manage_pdfs)
+        self.view.on_pdf_remove_clicked(self.remove_pdf)
         self.view.on_export_clicked(self.export_diagnosis)
         self.view.on_new_chat(self.new_chat)
         self.view.on_conv_selected(self.load_conversation)
@@ -263,6 +264,11 @@ class Controller(QObject):
 
     def show_justification(self):
         self.view.show_justification(self.model.justification)
+
+    def remove_pdf(self, path: str):
+        self.model.pdfs = [p for p in self.model.pdfs if p.get("path") != path]
+        self.view.show_pdf_window(self.model.pdfs)
+        self._auto_save()
 
     def manage_pdfs(self):
         files, _ = QFileDialog.getOpenFileNames(
