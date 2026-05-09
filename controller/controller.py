@@ -73,17 +73,24 @@ class Controller(QObject):
         self.view.on_pdf_add_clicked(self.manage_pdfs)
         self.view.on_pdf_remove_clicked(self.remove_pdf)
         self.view.on_export_clicked(self.export_diagnosis)
+        self.view.on_save_case(self.save_case_file)
+        self.view.on_load_case(self.load_case_file)
         self.view.on_new_chat(self.new_chat)
         self.view.on_conv_selected(self.load_conversation)
-
+        self.view.on_title_changed(self._on_title_changed)
     # ── Session / conversations ───────────────────────────────
 
     def _restore_session(self):
         convs = load_convs()
         self.view.show_conversations(convs)
         if convs:
-            # Load the most recent conversation silently
             self._load_conv_data(convs[0]["id"], update_list=False)
+        else:
+            cid = new_conv_id()
+            self.model.current_conv_id = cid
+
+    def _on_title_changed(self, text: str):
+        self._pending_name = text.strip() or "Caso sin título"
 
     def _auto_save(self):
         if not self.model.current_conv_id:
@@ -115,7 +122,7 @@ class Controller(QObject):
         self.model.justification = []
         self.model.pdfs = []
         self._pending_name = name.strip() or "Sin título"
-        self._auto_save()  # persist the new empty conversation so it appears in list
+        self._auto_save()
         self.view.clear_chat()
         self.view.clear_results()
         self.view.set_editor_text("")
@@ -147,6 +154,8 @@ class Controller(QObject):
         self.model.pdfs = self.pdf_service.add_pdfs(pdf_paths) if pdf_paths else []
         self.view.show_pdf_window(self.model.pdfs)
 
+        self._pending_name = data.get("name", "Caso sin título")
+        self.view.set_case_title(self._pending_name)
         self.view.clear_chat()
         for msg in self.model.chat_history:
             self.view.add_chat_message(msg["role"], msg["content"], timestamp=msg.get("timestamp", "—"))
@@ -314,6 +323,70 @@ class Controller(QObject):
         self.model.pdfs.extend(new_pdfs)
         self.view.show_pdf_window(self.model.pdfs)
         self._auto_save()
+
+    def save_case_file(self):
+        import json
+        title = self.view.get_case_title()
+        path, _ = QFileDialog.getSaveFileName(
+            self.view, "Guardar caso", f"{title}.issbc", "Casos ISSBC (*.issbc)"
+        )
+        if not path:
+            return
+        self._auto_save()
+        data = {
+            "id": self.model.current_conv_id,
+            "name": title,
+            "symptoms": self.model.symptoms,
+            "chat_history": self.model.chat_history,
+            "hypotheses": self.model.hypotheses,
+            "diagnosis": self.model.diagnosis,
+            "justification": self.model.justification,
+            "pdf_paths": [p["path"] for p in self.model.pdfs],
+        }
+        try:
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+            self.view.add_chat_message("assistant", f"Caso guardado en:\n{path}")
+        except Exception as e:
+            self.view.show_status_error(f"Error al guardar: {e}")
+
+    def load_case_file(self):
+        import json
+        path, _ = QFileDialog.getOpenFileName(
+            self.view, "Abrir caso", "", "Casos ISSBC (*.issbc)"
+        )
+        if not path:
+            return
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+        except Exception as e:
+            self.view.show_status_error(f"Error al abrir: {e}")
+            return
+        self._auto_save()
+        self.model.current_conv_id = data.get("id") or new_conv_id()
+        self.model.symptoms = data.get("symptoms", [])
+        self.model.chat_history = data.get("chat_history", [])
+        self.model.hypotheses = data.get("hypotheses", [])
+        self.model.diagnosis = data.get("diagnosis", {})
+        self.model.justification = data.get("justification", [])
+        self._pending_name = data.get("name", "Caso sin título")
+        import pathlib
+        pdf_paths = [p for p in data.get("pdf_paths", []) if pathlib.Path(p).exists()]
+        self.model.pdfs = self.pdf_service.add_pdfs(pdf_paths) if pdf_paths else []
+        self.view.show_pdf_window(self.model.pdfs)
+        self.view.set_case_title(self._pending_name)
+        self.view.clear_chat()
+        for msg in self.model.chat_history:
+            self.view.add_chat_message(msg["role"], msg["content"], timestamp=msg.get("timestamp", "—"))
+        if self.model.symptoms:
+            self.view.set_editor_text("\n".join(self.model.symptoms))
+        self.view.clear_results()
+        if self.model.hypotheses:
+            self.view.show_hypotheses(self.model.hypotheses)
+        if self.model.diagnosis:
+            self.view.show_diagnosis(self.model.diagnosis)
+        self.view.show_conversations(load_convs())
 
     def export_diagnosis(self):
         if not self.model.diagnosis:

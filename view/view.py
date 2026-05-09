@@ -272,22 +272,6 @@ def get_stylesheet(theme):
         QTabWidget::pane {{
             border: none;
         }}
-        QTabBar::tab {{
-            background: {theme['surface2']};
-            color: {theme['text_muted']};
-            border: none;
-            padding: 6px 14px;
-            font-size: 12px;
-        }}
-        QTabBar::tab:selected {{
-            background: {theme['canvas']};
-            color: {theme['text']};
-            font-weight: 600;
-            border-bottom: 2px solid {theme['accent']};
-        }}
-        QTabBar::tab:hover:!selected {{
-            background: {theme['border']};
-        }}
         QStatusBar {{
             background-color: {theme['canvas']};
             border-top: 1px solid {theme['border']};
@@ -1838,13 +1822,19 @@ class MainWindow(QMainWindow):
         cmd_lay.setContentsMargins(16, 0, 16, 0)
         cmd_lay.setSpacing(10)
 
-        # Title + date stacked vertically on the left
+        # Editable title + date stacked vertically on the left
         title_col = QVBoxLayout()
         title_col.setSpacing(1)
         title_col.setContentsMargins(0, 0, 0, 0)
-        title_lbl = QLabel("Diagnóstico legal")
-        title_lbl.setStyleSheet("font-size: 13px; font-weight: 700;")
-        title_col.addWidget(title_lbl)
+        self._title_edit = QLineEdit("Caso sin título")
+        self._title_edit.setStyleSheet(
+            "QLineEdit { font-size: 13px; font-weight: 700; border: none;"
+            " background: transparent; padding: 0; }"
+            "QLineEdit:focus { border-bottom: 1px solid palette(highlight); }"
+        )
+        self._title_edit.setFixedHeight(18)
+        self._title_edit.setMaximumWidth(220)
+        title_col.addWidget(self._title_edit)
         today = _date.today()
         months = ["ene","feb","mar","abr","may","jun","jul","ago","sep","oct","nov","dic"]
         date_str = f"{today.day} {months[today.month - 1]} {today.year}"
@@ -1873,6 +1863,18 @@ class MainWindow(QMainWindow):
         self._theme_btn.setToolTip("Alternar tema claro / oscuro")
         self._theme_btn.clicked.connect(self.toggle_theme)
         cmd_lay.addWidget(self._theme_btn)
+
+        self._save_btn = QPushButton("↓ Guardar")
+        self._save_btn.setObjectName("ghost")
+        self._save_btn.setFixedSize(110, 34)
+        self._save_btn.setToolTip("Guardar caso como .issbc")
+        cmd_lay.addWidget(self._save_btn)
+
+        self._load_btn = QPushButton("↑ Abrir")
+        self._load_btn.setObjectName("ghost")
+        self._load_btn.setFixedSize(110, 34)
+        self._load_btn.setToolTip("Abrir caso .issbc")
+        cmd_lay.addWidget(self._load_btn)
 
         divider = QFrame()
         divider.setFrameShape(QFrame.Shape.VLine)
@@ -2042,6 +2044,7 @@ class MainWindow(QMainWindow):
         QShortcut(QKeySequence("Ctrl+Return"), self).activated.connect(self._diag_btn.click)
         QShortcut(QKeySequence("Ctrl+K"), self).activated.connect(self._search_bar.setFocus)
         QShortcut(QKeySequence("Escape"), self).activated.connect(self._close_open_drawer)
+        QShortcut(QKeySequence("Ctrl+?"), self).activated.connect(self._show_shortcuts)
 
         self.apply_theme()
 
@@ -2090,6 +2093,45 @@ class MainWindow(QMainWindow):
             self._just_drawer.close_drawer()
         if self._conv_overlay.is_open():
             self._conv_overlay.hide_overlay()
+
+    def _show_shortcuts(self):
+        from PyQt6.QtWidgets import QDialog, QTableWidget, QTableWidgetItem, QHeaderView
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Atajos de teclado")
+        dlg.setMinimumWidth(360)
+        theme = DARK_THEME if self.is_dark_mode else LIGHT_THEME
+        dlg.setStyleSheet(get_stylesheet(theme))
+        lay = QVBoxLayout(dlg)
+        lay.setContentsMargins(16, 16, 16, 16)
+        lay.setSpacing(10)
+        lbl = QLabel("Atajos de teclado")
+        lbl.setStyleSheet("font-size: 14px; font-weight: 700;")
+        lay.addWidget(lbl)
+        shortcuts = [
+            ("Ctrl+Enter", "Analizar caso"),
+            ("Ctrl+K", "Buscar en el chat"),
+            ("Ctrl+?", "Mostrar atajos"),
+            ("Escape", "Cerrar panel / overlay"),
+        ]
+        tbl = QTableWidget(len(shortcuts), 2)
+        tbl.setHorizontalHeaderLabels(["Atajo", "Acción"])
+        tbl.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        tbl.verticalHeader().setVisible(False)
+        tbl.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        tbl.setSelectionMode(QTableWidget.SelectionMode.NoSelection)
+        tbl.setShowGrid(False)
+        tbl.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        for i, (key, desc) in enumerate(shortcuts):
+            key_item = QTableWidgetItem(key)
+            key_item.setFont(QFont("JetBrains Mono, Consolas, monospace", 11))
+            tbl.setItem(i, 0, key_item)
+            tbl.setItem(i, 1, QTableWidgetItem(desc))
+        lay.addWidget(tbl)
+        close = QPushButton("Cerrar")
+        close.setObjectName("primary")
+        close.clicked.connect(dlg.accept)
+        lay.addWidget(close, alignment=Qt.AlignmentFlag.AlignRight)
+        dlg.exec()
 
     def _close_open_drawer(self):
         if self._just_drawer.is_open():
@@ -2246,6 +2288,12 @@ class MainWindow(QMainWindow):
     def on_export_clicked(self, callback):
         self._results.set_on_export(callback)
 
+    def on_save_case(self, callback):
+        self._save_btn.clicked.connect(callback)
+
+    def on_load_case(self, callback):
+        self._load_btn.clicked.connect(callback)
+
     def _on_search_changed(self, query: str):
         query = query.strip().lower()
         lay = self._chat_lay
@@ -2291,6 +2339,15 @@ class MainWindow(QMainWindow):
         bar.setRange(0, total)
         bar.setValue(current)
         bar.show()
+
+    def get_case_title(self) -> str:
+        return self._title_edit.text().strip() or "Caso sin título"
+
+    def set_case_title(self, title: str):
+        self._title_edit.setText(title or "Caso sin título")
+
+    def on_title_changed(self, callback):
+        self._title_edit.textChanged.connect(callback)
 
     def get_symptoms(self):
         return [line for line in self._editor.toPlainText().split("\n") if line.strip()]
