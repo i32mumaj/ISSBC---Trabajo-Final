@@ -1603,7 +1603,7 @@ def _md_to_html(text: str) -> str:
 
 
 class ChatBubble(QFrame):
-    def __init__(self, role: str, content: str, theme: dict = None, parent=None):
+    def __init__(self, role: str, content: str, theme: dict = None, timestamp: str = None, parent=None):
         super().__init__(parent)
         self._role = role
         self._raw_content = content
@@ -1626,7 +1626,8 @@ class ChatBubble(QFrame):
         header.addWidget(role_lbl)
 
         from datetime import datetime as _dt
-        ts = QLabel(_dt.now().strftime("%H:%M"))
+        ts_text = timestamp if timestamp else _dt.now().strftime("%H:%M")
+        ts = QLabel(ts_text)
         ts.setObjectName("mono")
         ts.setStyleSheet("font-size: 9.5px; background: transparent; border: none;")
         header.addWidget(ts)
@@ -2014,9 +2015,9 @@ class MainWindow(QMainWindow):
     def on_chat_send(self, callback):
         self._chat_send_cb = callback
 
-    def add_chat_message(self, role: str, content: str) -> "ChatBubble":
+    def add_chat_message(self, role: str, content: str, timestamp: str = None) -> "ChatBubble":
         theme = DARK_THEME if self.is_dark_mode else LIGHT_THEME
-        bubble = ChatBubble(role, content, theme)
+        bubble = ChatBubble(role, content, theme, timestamp=timestamp)
         count = self._chat_lay.count()
         self._chat_lay.insertWidget(count - 1, bubble)
         self._scroll_chat_bottom()
