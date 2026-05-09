@@ -11,5 +11,8 @@ class Model:
         self.web_sources = []
 
         self.history = []
+        self.chat_history = []
 
         self.mode = "LOCAL"
+
+        self.current_conv_id: str | None = None
