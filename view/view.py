@@ -1186,6 +1186,7 @@ class PdfTray(QFrame):
         self._theme = theme
         self._pdfs = []
         self._add_cb = None
+        self._remove_cb = None
         self._pdf_dblclick_cb = None
 
         lay = QVBoxLayout(self)
@@ -1213,13 +1214,34 @@ class PdfTray(QFrame):
         )
         self._add_btn.clicked.connect(self._on_add)
         header_row.addWidget(self._add_btn)
+
+        self._del_btn = QPushButton("✕")
+        self._del_btn.setObjectName("icon_btn")
+        self._del_btn.setFixedSize(22, 22)
+        self._del_btn.setToolTip("Eliminar PDF seleccionado")
+        self._del_btn.setEnabled(False)
+        self._del_btn.clicked.connect(self._on_delete)
+        header_row.addWidget(self._del_btn)
         lay.addLayout(header_row)
+
+        # Search bar
+        self._search = QLineEdit()
+        self._search.setPlaceholderText("Buscar documento…")
+        self._search.setFixedHeight(26)
+        self._search.textChanged.connect(self._filter_list)
+        lay.addWidget(self._search)
 
         # PDF list
         self._list = QListWidget()
         self._list.setIconSize(QPixmap(20, 26).size())
         self._list.itemDoubleClicked.connect(self._on_double_click)
         lay.addWidget(self._list, 1)
+
+        self._load_bar = QProgressBar()
+        self._load_bar.setFixedHeight(3)
+        self._load_bar.setTextVisible(False)
+        self._load_bar.hide()
+        lay.addWidget(self._load_bar)
 
         # Mini preview box
         sep = QFrame()
@@ -1255,9 +1277,17 @@ class PdfTray(QFrame):
         lay.addWidget(self._preview_card, 1)
 
         self._list.currentItemChanged.connect(self._on_selection_changed)
+        self._list.currentItemChanged.connect(
+            lambda cur, _: self._del_btn.setEnabled(cur is not None)
+        )
+
+        self.setAcceptDrops(True)
 
     def set_add_callback(self, cb):
         self._add_cb = cb
+
+    def set_remove_callback(self, cb):
+        self._remove_cb = cb
 
     def set_menu_callback(self, cb):
         self._menu_btn.clicked.connect(cb)
@@ -1268,6 +1298,14 @@ class PdfTray(QFrame):
     def _on_add(self):
         if self._add_cb:
             self._add_cb()
+
+    def _on_delete(self):
+        idx = self._list.currentRow()
+        if idx < 0 or idx >= len(self._pdfs):
+            return
+        path = self._pdfs[idx].get("path", "")
+        if hasattr(self, "_remove_cb") and self._remove_cb:
+            self._remove_cb(path)
 
     def _on_double_click(self, item):
         if self._pdf_dblclick_cb:
@@ -1322,6 +1360,29 @@ class PdfTray(QFrame):
             self._list.addItem(item)
         if pdfs:
             self._list.setCurrentRow(0)
+
+    def _filter_list(self, query: str):
+        query = query.strip().lower()
+        for i in range(self._list.count()):
+            item = self._list.item(i)
+            item.setHidden(query != "" and query not in item.text().lower())
+
+    def dragEnterEvent(self, event):
+        if event.mimeData().hasUrls():
+            pdfs = [u.toLocalFile() for u in event.mimeData().urls() if u.toLocalFile().lower().endswith(".pdf")]
+            if pdfs:
+                event.acceptProposedAction()
+                return
+        event.ignore()
+
+    def dragMoveEvent(self, event):
+        if event.mimeData().hasUrls():
+            event.acceptProposedAction()
+
+    def dropEvent(self, event):
+        paths = [u.toLocalFile() for u in event.mimeData().urls() if u.toLocalFile().lower().endswith(".pdf")]
+        if paths and self._add_cb:
+            self._add_cb(paths)
 
     def update_theme(self, theme):
         self._theme = theme
@@ -1383,8 +1444,17 @@ class PDFWindow(QDialog):
         pcc.addLayout(overlay)
         pcc.addWidget(self.preview_scroll)
 
+        # Grid view
+        self.grid_scroll = QScrollArea()
+        self.grid_scroll.setWidgetResizable(True)
+        self.grid_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self.grid_widget = QWidget()
+        self.grid_lay = None
+        self.grid_scroll.setWidget(self.grid_widget)
+
         if PDF_PREVIEW_AVAILABLE:
             self.preview_stack.addWidget(self.preview_container)
+            self.preview_stack.addWidget(self.grid_scroll)
 
         self.splitter.addWidget(self.list_widget)
         self.splitter.addWidget(self.preview_stack)
@@ -1412,7 +1482,14 @@ class PDFWindow(QDialog):
         nav.addWidget(self.zoom_lbl)
         nav.addWidget(self.zoom_in_btn)
         nav.addStretch()
+        self.grid_btn = QPushButton("⊞ Grid")
+        self.grid_btn.setObjectName("ghost")
+        self.grid_btn.setFixedHeight(28)
+        self.grid_btn.setCheckable(True)
+        self.grid_btn.clicked.connect(self._toggle_grid)
+        nav.addWidget(self.grid_btn)
         lay.addLayout(nav)
+        self._grid_mode = False
 
         btns = QHBoxLayout()
         self.add_btn = QPushButton("Añadir PDFs")
@@ -1434,6 +1511,70 @@ class PDFWindow(QDialog):
         self.next_btn.clicked.connect(lambda: self.change_page(1))
         self.zoom_out_btn.clicked.connect(lambda: self.change_zoom(-0.1))
         self.zoom_in_btn.clicked.connect(lambda: self.change_zoom(0.1))
+
+    def _toggle_grid(self, checked):
+        self._grid_mode = checked
+        self.grid_btn.setText("☰ Página" if checked else "⊞ Grid")
+        for b in (self.prev_btn, self.next_btn, self.zoom_out_btn, self.zoom_in_btn):
+            b.setEnabled(not checked)
+        if checked:
+            self._build_grid()
+        else:
+            if self.current_pdf_path:
+                self.preview_stack.setCurrentWidget(self.preview_container)
+
+    def _build_grid(self):
+        if not self.current_pdf_path or not PDF_PREVIEW_AVAILABLE:
+            return
+        # Clear old grid
+        old = self.grid_widget.layout()
+        if old:
+            while old.count():
+                item = old.takeAt(0)
+                if item.widget():
+                    item.widget().deleteLater()
+            import sip
+            try:
+                sip.delete(old)
+            except Exception:
+                pass
+        from PyQt6.QtWidgets import QGridLayout
+        grid = QGridLayout(self.grid_widget)
+        grid.setSpacing(8)
+        grid.setContentsMargins(12, 12, 12, 12)
+        self.grid_lay = grid
+        cols = 4
+        thumb_w = 140
+        try:
+            doc = fitz.open(self.current_pdf_path)
+            for i in range(doc.page_count):
+                page = doc.load_page(i)
+                scale = thumb_w / page.rect.width
+                mat = fitz.Matrix(scale, scale)
+                pix = page.get_pixmap(matrix=mat, alpha=False)
+                img = QImage(pix.samples, pix.width, pix.height,
+                             pix.stride, QImage.Format.Format_RGB888).copy()
+                pm = QPixmap.fromImage(img)
+                btn = QPushButton()
+                btn.setIcon(QIcon(pm))
+                btn.setIconSize(pm.size())
+                btn.setFixedSize(pm.width() + 8, pm.height() + 24)
+                btn.setText(f"  {i + 1}")
+                btn.setObjectName("ghost")
+                btn.setStyleSheet("QPushButton { text-align: center; font-size: 10px; padding-top: 2px; }")
+                page_idx = i
+                btn.clicked.connect(lambda _, p=page_idx: self._jump_to_page(p))
+                grid.addWidget(btn, i // cols, i % cols)
+            doc.close()
+        except Exception:
+            pass
+        self.preview_stack.setCurrentWidget(self.grid_scroll)
+
+    def _jump_to_page(self, idx):
+        self.grid_btn.setChecked(False)
+        self._toggle_grid(False)
+        self.current_page = idx
+        self.render_page(idx)
 
     def update_theme(self, is_dark):
         self.is_dark_mode = is_dark
@@ -2138,6 +2279,18 @@ class MainWindow(QMainWindow):
             except Exception:
                 pass
             self._pw.add_btn.clicked.connect(callback)
+
+    def on_pdf_remove_clicked(self, callback):
+        self._pdf_tray.set_remove_callback(callback)
+
+    def show_pdf_loading(self, current: int, total: int):
+        bar = self._pdf_tray._load_bar
+        if total == 0 or current >= total:
+            bar.hide()
+            return
+        bar.setRange(0, total)
+        bar.setValue(current)
+        bar.show()
 
     def get_symptoms(self):
         return [line for line in self._editor.toPlainText().split("\n") if line.strip()]
