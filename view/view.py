@@ -1880,6 +1880,18 @@ class MainWindow(QMainWindow):
         self._theme_btn.clicked.connect(self.toggle_theme)
         cmd_lay.addWidget(self._theme_btn)
 
+        self._save_btn = QPushButton("↓ Guardar")
+        self._save_btn.setObjectName("ghost")
+        self._save_btn.setFixedHeight(32)
+        self._save_btn.setToolTip("Guardar caso como .issbc")
+        cmd_lay.addWidget(self._save_btn)
+
+        self._load_btn = QPushButton("↑ Abrir")
+        self._load_btn.setObjectName("ghost")
+        self._load_btn.setFixedHeight(32)
+        self._load_btn.setToolTip("Abrir caso .issbc")
+        cmd_lay.addWidget(self._load_btn)
+
         divider = QFrame()
         divider.setFrameShape(QFrame.Shape.VLine)
         divider.setFixedHeight(22)
@@ -2291,6 +2303,12 @@ class MainWindow(QMainWindow):
 
     def on_export_clicked(self, callback):
         self._results.set_on_export(callback)
+
+    def on_save_case(self, callback):
+        self._save_btn.clicked.connect(callback)
+
+    def on_load_case(self, callback):
+        self._load_btn.clicked.connect(callback)
 
     def _on_search_changed(self, query: str):
         query = query.strip().lower()
