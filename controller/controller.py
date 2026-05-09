@@ -194,6 +194,7 @@ class Controller(QObject):
             })
             self.view.show_hypotheses(hyps)
             self.view.show_diagnosis(diag)
+            self.view.set_pdf_count(len(self.model.pdfs))
             self._auto_save()
 
             sev_icons = {"high": "● ALTO", "medium": "◐ MEDIO", "low": "○ BAJO"}

@@ -457,6 +457,51 @@ class HypothesisRow(QFrame):
         lay.addWidget(score_lbl)
 
 
+class HypothesisBar(QFrame):
+    """Full-width horizontal bar chart row for a hypothesis."""
+
+    def __init__(self, hyp, theme, parent=None):
+        super().__init__(parent)
+        c = severity_color(theme, hyp.get("severity", "medium"))
+        pct = int(hyp.get("score", 0) * 100)
+
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(0, 4, 0, 4)
+        lay.setSpacing(4)
+
+        top = QHBoxLayout()
+        top.setSpacing(6)
+        name_lbl = QLabel(hyp.get("name", ""))
+        name_lbl.setStyleSheet("font-size: 12px; font-weight: 500; background: transparent;")
+        name_lbl.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        top.addWidget(name_lbl, 1)
+
+        pct_lbl = QLabel(f"{pct}%")
+        pct_lbl.setStyleSheet(
+            f"color: {c}; font-size: 11px; font-weight: 600; background: transparent;"
+            f" font-family: 'JetBrains Mono', 'Consolas', monospace;"
+        )
+        top.addWidget(pct_lbl)
+        lay.addLayout(top)
+
+        bar_bg = QFrame()
+        bar_bg.setFixedHeight(6)
+        bar_bg.setStyleSheet(f"background-color: {theme['border']}; border-radius: 3px;")
+        bar_fill = QFrame(bar_bg)
+        bar_fill.setFixedHeight(6)
+        bar_fill.setStyleSheet(f"background-color: {c}; border-radius: 3px;")
+        bar_fill.setFixedWidth(0)
+        self._bar_fill = bar_fill
+        self._pct = pct
+        lay.addWidget(bar_bg)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        total = self.width()
+        if total > 0 and hasattr(self, "_bar_fill"):
+            self._bar_fill.setFixedWidth(max(0, int(total * self._pct / 100)))
+
+
 class CitationRow(QFrame):
     """Compact single-line citation row."""
 
@@ -763,6 +808,12 @@ class ResultsPane(QWidget):
         self._confidence_lbl.setStyleSheet("font-size: 10px;")
         self._confidence_lbl.hide()
         top_row.addWidget(self._confidence_lbl)
+
+        self._pdf_badge = QLabel()
+        self._pdf_badge.setObjectName("mono")
+        self._pdf_badge.setStyleSheet("font-size: 10px;")
+        self._pdf_badge.hide()
+        top_row.addWidget(self._pdf_badge)
         sh_lay.addLayout(top_row)
 
         self._diag_title = QLabel("Sin análisis aún")
@@ -833,6 +884,13 @@ class ResultsPane(QWidget):
         lay.addWidget(self._cit_section)
         lay.addStretch()
 
+    def set_pdf_count(self, n: int):
+        if n > 0:
+            self._pdf_badge.setText(f"📄 {n} doc{'s' if n != 1 else ''}")
+            self._pdf_badge.show()
+        else:
+            self._pdf_badge.hide()
+
     def set_on_justify(self, cb):
         self._on_justify = cb
 
@@ -894,7 +952,7 @@ class ResultsPane(QWidget):
             if header_lbl:
                 header_lbl.setText(f"HIPÓTESIS · {len(hypotheses)}")
             for h in sorted_hyps:
-                row = HypothesisRow(h, t)
+                row = HypothesisBar(h, t)
                 self._hyp_rows_lay.addWidget(row)
         else:
             self._hyp_placeholder.show()
@@ -2075,6 +2133,9 @@ class MainWindow(QMainWindow):
             data = diagnosis
         self._results.update_diagnosis(data)
         self.reveal_results_pane()
+
+    def set_pdf_count(self, n: int):
+        self._results.set_pdf_count(n)
 
     def show_justification(self, justification):
         theme = DARK_THEME if self.is_dark_mode else LIGHT_THEME
