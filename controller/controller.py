@@ -81,6 +81,7 @@ class Controller(QObject):
         self.view.on_pdf_remove_clicked(self.remove_pdf)
         self.view.on_export_clicked(self.show_export_menu)
         self.view.on_print(self.print_diagnosis)
+        self.view.on_settings_clicked(self.view.show_settings_dialog)
         self.view.on_save_case(self.save_case_file)
         self.view.on_load_case(self.load_case_file)
         self.view.on_new_chat(self.new_chat)

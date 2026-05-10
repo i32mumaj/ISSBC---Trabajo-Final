@@ -3,7 +3,17 @@ import re
 
 import ollama
 
+from services.settings_service import load_settings
+
 MODEL = "qwen2.5:7b"
+
+
+def _current_model() -> str:
+    return load_settings().get("ollama_model", MODEL)
+
+
+def _extra_prompt() -> str:
+    return load_settings().get("extra_prompt", "").strip()
 
 _HYPO_SYSTEM = """\
 You are a Spanish legal assistant. ALWAYS respond in Spanish. Never use Chinese or any other language.
@@ -74,18 +84,22 @@ def _build_pdf_context(pdfs: list) -> str:
 
 
 def _chat(system: str, user: str, on_token=None) -> str:
+    extra = _extra_prompt()
+    if extra:
+        system = system + f"\n\nInstrucciones adicionales:\n{extra}"
+    model = _current_model()
     messages = [
         {"role": "system", "content": system},
         {"role": "user", "content": user},
     ]
     if on_token is not None:
         full = ""
-        for chunk in ollama.chat(model=MODEL, messages=messages, stream=True):
+        for chunk in ollama.chat(model=model, messages=messages, stream=True):
             token = chunk["message"]["content"]
             full += token
             on_token(full)
         return full
-    response = ollama.chat(model=MODEL, messages=messages)
+    response = ollama.chat(model=model, messages=messages)
     return response["message"]["content"]
 
 
@@ -171,20 +185,24 @@ class LLMService:
 
     def chat(self, messages: list, case_text: str = "", pdfs: list = None,
              on_token=None) -> str:
+        extra = _extra_prompt()
         system = _CHAT_SYSTEM
         if case_text.strip():
             system += f"\n\nResumen del caso:\n{case_text}"
         if pdfs:
             system += _build_pdf_context(pdfs)
+        if extra:
+            system += f"\n\nInstrucciones adicionales:\n{extra}"
+        model = _current_model()
         ollama_msgs = [{"role": "system", "content": system}] + [
             {"role": m["role"], "content": m["content"]} for m in messages
         ]
         if on_token is not None:
             full = ""
-            for chunk in ollama.chat(model=MODEL, messages=ollama_msgs, stream=True):
+            for chunk in ollama.chat(model=model, messages=ollama_msgs, stream=True):
                 token = chunk["message"]["content"]
                 full += token
                 on_token(full)
             return full
-        response = ollama.chat(model=MODEL, messages=ollama_msgs)
+        response = ollama.chat(model=model, messages=ollama_msgs)
         return response["message"]["content"]

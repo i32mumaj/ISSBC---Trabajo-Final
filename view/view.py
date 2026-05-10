@@ -361,13 +361,13 @@ def severity_label(severity):
     return {"high": "ALTO", "medium": "MEDIO", "low": "BAJO"}.get(severity, "—")
 
 
-def get_stylesheet(theme):
+def get_stylesheet(theme, font_size: int = 13):
     return f"""
         QWidget {{
             background-color: {theme['bg']};
             color: {theme['text']};
             font-family: 'Inter', 'Segoe UI', 'SF Pro Display', sans-serif;
-            font-size: 13px;
+            font-size: {font_size}px;
         }}
         QMainWindow, QDialog {{
             background-color: {theme['bg']};
@@ -2228,6 +2228,12 @@ class MainWindow(QMainWindow):
         self._theme_btn.clicked.connect(self.toggle_theme)
         cmd_lay.addWidget(self._theme_btn)
 
+        self._settings_btn = QPushButton("Ajustes")
+        self._settings_btn.setObjectName("ghost")
+        self._settings_btn.setFixedHeight(32)
+        self._settings_btn.setToolTip("Ajustes")
+        cmd_lay.addWidget(self._settings_btn)
+
         self._save_btn = QPushButton("↓ Guardar")
         self._save_btn.setObjectName("tinted")
         self._save_btn.setFixedSize(110, 34)
@@ -2431,8 +2437,10 @@ class MainWindow(QMainWindow):
     # ── Theme ─────────────────────────────────────────────────
 
     def apply_theme(self):
+        from services.settings_service import load_settings
         theme = DARK_THEME if self.is_dark_mode else LIGHT_THEME
-        self.setStyleSheet(get_stylesheet(theme))
+        font_size = load_settings().get("font_size", 13)
+        self.setStyleSheet(get_stylesheet(theme, font_size))
         self._theme_btn.setText("○" if self.is_dark_mode else "◑")
         if self.is_dark_mode:
             self._cmd_bar.setStyleSheet(
@@ -2473,6 +2481,228 @@ class MainWindow(QMainWindow):
             self._just_drawer.close_drawer()
         if self._conv_overlay.is_open():
             self._conv_overlay.hide_overlay()
+
+    def show_settings_dialog(self):
+        from PyQt6.QtWidgets import (
+            QDialog, QComboBox, QSlider, QTextEdit as _QTextEdit, QFormLayout,
+        )
+        from PyQt6.QtCore import Qt as _Qt
+        from services.settings_service import load_settings, save_settings
+        try:
+            import ollama as _ollama
+            available_models = [m["model"] for m in _ollama.list().get("models", [])]
+        except Exception:
+            available_models = []
+
+        settings = load_settings()
+        theme = DARK_THEME if self.is_dark_mode else LIGHT_THEME
+
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Ajustes")
+        dlg.setMinimumWidth(460)
+        dlg.setStyleSheet(self.styleSheet())
+
+        lay = QVBoxLayout(dlg)
+        lay.setContentsMargins(24, 20, 24, 20)
+        lay.setSpacing(16)
+
+        title_lbl = QLabel("Ajustes")
+        title_lbl.setStyleSheet("font-size: 15px; font-weight: 700;")
+        lay.addWidget(title_lbl)
+
+        form = QFormLayout()
+        form.setSpacing(12)
+        form.setLabelAlignment(_Qt.AlignmentFlag.AlignRight)
+
+        # Model
+        model_combo = QComboBox()
+        current_model = settings.get("ollama_model", "qwen2.5:7b")
+        all_models = list(dict.fromkeys([current_model] + available_models))
+        model_combo.addItems(all_models)
+        model_combo.setCurrentText(current_model)
+        model_combo.setEditable(True)
+        model_lbl = QLabel("Modelo Ollama")
+        form.addRow(model_lbl, model_combo)
+
+        # Font size
+        font_val = settings.get("font_size", 13)
+        font_row = QHBoxLayout()
+        font_slider = QSlider(_Qt.Orientation.Horizontal)
+        font_slider.setRange(11, 17)
+        font_slider.setValue(font_val)
+        font_slider.setFixedWidth(160)
+        font_size_lbl = QLabel(f"{font_val}px")
+        font_size_lbl.setObjectName("mono")
+        font_size_lbl.setFixedWidth(36)
+        font_slider.valueChanged.connect(lambda v: font_size_lbl.setText(f"{v}px"))
+        font_row.addWidget(font_slider)
+        font_row.addWidget(font_size_lbl)
+        font_row.addStretch()
+        font_widget = QWidget()
+        font_widget.setLayout(font_row)
+        form.addRow(QLabel("Tamaño de fuente"), font_widget)
+
+        # Extra prompt
+        extra_edit = _QTextEdit()
+        extra_edit.setPlainText(settings.get("extra_prompt", ""))
+        extra_edit.setPlaceholderText("Instrucciones adicionales para el modelo (opcional)…")
+        extra_edit.setFixedHeight(90)
+        form.addRow(QLabel("Prompt extra"), extra_edit)
+
+        lay.addLayout(form)
+
+        # ── Download model section ────────────────────────────
+        sep = QFrame()
+        sep.setFrameShape(QFrame.Shape.HLine)
+        sep.setStyleSheet(f"color: {theme['border']};")
+        lay.addWidget(sep)
+
+        dl_title = QLabel("Descargar modelo")
+        dl_title.setStyleSheet("font-size: 12px; font-weight: 700;")
+        lay.addWidget(dl_title)
+
+        _AVAILABLE_MODELS = [
+            # (etiqueta mostrada, nombre ollama)
+            ("Qwen 2.5 · 3B  (rápido, ligero)",        "qwen2.5:3b"),
+            ("Qwen 2.5 · 7B  (recomendado)",            "qwen2.5:7b"),
+            ("Qwen 2.5 · 14B  (más preciso)",           "qwen2.5:14b"),
+            ("Llama 3.2 · 1B  (muy ligero)",            "llama3.2:1b"),
+            ("Llama 3.2 · 3B  (ligero)",                "llama3.2:3b"),
+            ("Llama 3.1 · 8B  (equilibrado)",           "llama3.1:8b"),
+            ("Mistral · 7B  (equilibrado)",              "mistral:7b"),
+            ("Gemma 3 · 4B  (Google, ligero)",          "gemma3:4b"),
+            ("Gemma 3 · 12B  (Google, preciso)",        "gemma3:12b"),
+            ("Phi-4 · 14B  (Microsoft, muy preciso)",   "phi4:14b"),
+            ("DeepSeek-R1 · 7B  (razonamiento)",        "deepseek-r1:7b"),
+        ]
+
+        from PyQt6.QtWidgets import QComboBox as _QComboBox
+        dl_row = QHBoxLayout()
+        dl_combo = _QComboBox()
+        dl_combo.setFixedHeight(32)
+        for label, _ in _AVAILABLE_MODELS:
+            dl_combo.addItem(label)
+        dl_btn = QPushButton("Descargar")
+        dl_btn.setObjectName("soft")
+        dl_btn.setFixedHeight(32)
+        dl_btn.setFixedWidth(110)
+        dl_row.addWidget(dl_combo, 1)
+        dl_row.addWidget(dl_btn)
+        lay.addLayout(dl_row)
+
+        dl_bar = QProgressBar()
+        dl_bar.setFixedHeight(4)
+        dl_bar.setTextVisible(False)
+        dl_bar.setRange(0, 0)
+        dl_bar.hide()
+        lay.addWidget(dl_bar)
+
+        dl_status = QLabel("")
+        dl_status.setObjectName("mono")
+        dl_status.setStyleSheet("font-size: 11px;")
+        dl_status.hide()
+        lay.addWidget(dl_status)
+
+        from PyQt6.QtCore import QThread, pyqtSignal as _Signal
+
+        class _PullWorker(QThread):
+            progress = _Signal(str, int, int)
+            done = _Signal(bool, str)
+
+            def __init__(self, model_name):
+                super().__init__()
+                self._model = model_name
+
+            def run(self):
+                try:
+                    import ollama as _ol
+                    for chunk in _ol.pull(self._model, stream=True):
+                        status = chunk.get("status", "")
+                        completed = chunk.get("completed", 0)
+                        total = chunk.get("total", 0)
+                        self.progress.emit(status, completed, total)
+                    self.done.emit(True, "")
+                except Exception as exc:
+                    self.done.emit(False, str(exc))
+
+        _pull_worker = [None]
+
+        def _on_dl_progress(status, completed, total):
+            dl_status.setText(status)
+            if total > 0:
+                dl_bar.setRange(0, total)
+                dl_bar.setValue(completed)
+            else:
+                dl_bar.setRange(0, 0)
+
+        def _on_dl_done(ok, err):
+            dl_bar.hide()
+            dl_btn.setEnabled(True)
+            dl_combo.setEnabled(True)
+            idx = dl_combo.currentIndex()
+            model_name = _AVAILABLE_MODELS[idx][1] if idx >= 0 else ""
+            if ok:
+                dl_status.setText(f"✓ {model_name} descargado")
+                dl_status.setStyleSheet(f"font-size: 11px; color: {theme['success']};")
+                if model_name not in [model_combo.itemText(i) for i in range(model_combo.count())]:
+                    model_combo.insertItem(0, model_name)
+                model_combo.setCurrentText(model_name)
+            else:
+                dl_status.setText(f"Error: {err}")
+                dl_status.setStyleSheet(f"font-size: 11px; color: {theme['danger']};")
+
+        def _start_download():
+            idx = dl_combo.currentIndex()
+            if idx < 0:
+                return
+            name = _AVAILABLE_MODELS[idx][1]
+            dl_bar.setRange(0, 0)
+            dl_bar.show()
+            dl_status.setStyleSheet("font-size: 11px;")
+            dl_status.setText(f"Descargando {name}…")
+            dl_status.show()
+            dl_btn.setEnabled(False)
+            dl_combo.setEnabled(False)
+            w = _PullWorker(name)
+            w.progress.connect(_on_dl_progress)
+            w.done.connect(_on_dl_done)
+            w.start()
+            _pull_worker[0] = w
+
+        dl_btn.clicked.connect(_start_download)
+
+        # ── Bottom buttons ────────────────────────────────────
+        lay.addSpacing(4)
+        btn_row = QHBoxLayout()
+        btn_row.addStretch()
+        cancel_btn = QPushButton("Cancelar")
+        cancel_btn.setObjectName("ghost")
+        cancel_btn.setFixedHeight(34)
+        cancel_btn.clicked.connect(dlg.reject)
+        save_btn = QPushButton("Guardar")
+        save_btn.setObjectName("primary")
+        save_btn.setFixedHeight(34)
+        save_btn.setFixedWidth(100)
+
+        def _save():
+            new_settings = {
+                "ollama_model": model_combo.currentText().strip(),
+                "font_size": font_slider.value(),
+                "extra_prompt": extra_edit.toPlainText().strip(),
+            }
+            save_settings(new_settings)
+            self.apply_theme()
+            dlg.accept()
+
+        save_btn.clicked.connect(_save)
+        btn_row.addWidget(cancel_btn)
+        btn_row.addWidget(save_btn)
+        lay.addLayout(btn_row)
+
+        dlg.exec()
+
+    def on_settings_clicked(self, callback):
+        self._settings_btn.clicked.connect(callback)
 
     def _show_shortcuts(self):
         from PyQt6.QtWidgets import QDialog, QTableWidget, QTableWidgetItem, QHeaderView
