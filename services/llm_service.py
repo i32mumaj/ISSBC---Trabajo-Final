@@ -38,6 +38,10 @@ You are a Spanish legal assistant. ALWAYS respond in Spanish. Never use Chinese 
 Help the user understand and analyze their legal case.
 Be clear, concise and helpful. Use the case summary and any attached documents as context."""
 
+_TITLE_SYSTEM = """\
+Generate a short title (3-5 words, in Spanish) for a legal case based on the user's first message.
+Reply ONLY with the title, no punctuation, no quotes."""
+
 
 def _build_pdf_context(pdfs: list) -> str:
     if not pdfs:
@@ -69,14 +73,19 @@ def _build_pdf_context(pdfs: list) -> str:
     return "\n\n---\nDocumentos adjuntos:\n\n" + "\n\n".join(parts)
 
 
-def _chat(system: str, user: str) -> str:
-    response = ollama.chat(
-        model=MODEL,
-        messages=[
-            {"role": "system", "content": system},
-            {"role": "user", "content": user},
-        ],
-    )
+def _chat(system: str, user: str, on_token=None) -> str:
+    messages = [
+        {"role": "system", "content": system},
+        {"role": "user", "content": user},
+    ]
+    if on_token is not None:
+        full = ""
+        for chunk in ollama.chat(model=MODEL, messages=messages, stream=True):
+            token = chunk["message"]["content"]
+            full += token
+            on_token(full)
+        return full
+    response = ollama.chat(model=MODEL, messages=messages)
     return response["message"]["content"]
 
 
@@ -132,15 +141,15 @@ def _parse_json(text: str):
 
 class LLMService:
 
-    def get_hypotheses(self, data: dict) -> list:
+    def get_hypotheses(self, data: dict, on_token=None) -> list:
         case_text = "\n".join(data.get("symptoms", []))
         if not case_text.strip():
             return []
         pdf_ctx = _build_pdf_context(data.get("pdfs", []))
-        raw = _chat(_HYPO_SYSTEM, f"Caso:\n{case_text}{pdf_ctx}")
+        raw = _chat(_HYPO_SYSTEM, f"Caso:\n{case_text}{pdf_ctx}", on_token=on_token)
         return _parse_json(raw)
 
-    def get_diagnosis(self, model) -> dict:
+    def get_diagnosis(self, model, on_token=None) -> dict:
         case_text = "\n".join(model.symptoms) if model.symptoms else ""
         hyp_block = ""
         if model.hypotheses:
@@ -150,8 +159,15 @@ class LLMService:
             ]
             hyp_block = "\n\nHipótesis previas:\n" + "\n".join(lines)
         pdf_ctx = _build_pdf_context(getattr(model, "pdfs", []))
-        raw = _chat(_DIAG_SYSTEM, f"Caso:\n{case_text}{hyp_block}{pdf_ctx}")
+        raw = _chat(_DIAG_SYSTEM, f"Caso:\n{case_text}{hyp_block}{pdf_ctx}", on_token=on_token)
         return _parse_json(raw)
+
+    def generate_title(self, first_message: str) -> str:
+        try:
+            title = _chat(_TITLE_SYSTEM, first_message[:300]).strip().strip('"\'').strip()
+            return title[:60] if title else "Sin título"
+        except Exception:
+            return "Sin título"
 
     def chat(self, messages: list, case_text: str = "", pdfs: list = None,
              on_token=None) -> str:

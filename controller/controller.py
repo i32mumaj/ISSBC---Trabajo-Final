@@ -62,6 +62,9 @@ class Controller(QObject):
         self._typing_bubble = None
         self._pending_name: str | None = None
         self._stream_text: str = ""
+        self._is_new_conv: bool = False
+        self._first_message_for_title: str | None = None
+        self._title_worker = None
         self._autosave_timer = QTimer()
         self._autosave_timer.setInterval(30_000)
         self._autosave_timer.timeout.connect(self._auto_save)
@@ -76,7 +79,8 @@ class Controller(QObject):
         self.view.on_pdf_clicked(self.open_pdf_manager)
         self.view.on_pdf_add_clicked(self.manage_pdfs)
         self.view.on_pdf_remove_clicked(self.remove_pdf)
-        self.view.on_export_clicked(self.export_diagnosis)
+        self.view.on_export_clicked(self.show_export_menu)
+        self.view.on_print(self.print_diagnosis)
         self.view.on_save_case(self.save_case_file)
         self.view.on_load_case(self.load_case_file)
         self.view.on_new_chat(self.new_chat)
@@ -90,9 +94,6 @@ class Controller(QObject):
         self.view.show_conversations(convs)
         if convs:
             self._load_conv_data(convs[0]["id"], update_list=False)
-        else:
-            cid = new_conv_id()
-            self.model.current_conv_id = cid
 
     def delete_conversation(self, conv_id: str):
         delete_conv(conv_id)
@@ -101,9 +102,25 @@ class Controller(QObject):
             if convs:
                 self._load_conv_data(convs[0]["id"], update_list=True)
             else:
-                self.new_chat("Caso sin título")
+                self._clear_to_empty()
         else:
             self.view.show_conversations(load_convs())
+
+    def _clear_to_empty(self):
+        self.model.current_conv_id = None
+        self.model.chat_history = []
+        self.model.hypotheses = []
+        self.model.diagnosis = {}
+        self.model.justification = []
+        self.model.pdfs = []
+        self.model.symptoms = []
+        self._pending_name = None
+        self._is_new_conv = False
+        self.view.clear_chat()
+        self.view.clear_results()
+        self.view.set_editor_text("")
+        self.view.show_pdf_window([])
+        self.view.show_conversations([])
 
     def _on_title_changed(self, text: str):
         self._pending_name = text.strip() or "Caso sin título"
@@ -196,22 +213,27 @@ class Controller(QObject):
             )
             self.view.set_running(False)
             return
+        if not self.model.current_conv_id:
+            self.model.current_conv_id = new_conv_id()
+            self._is_new_conv = True
         symptoms = list(self.model.symptoms)
         mode = self.model.mode
         pdfs = list(self.model.pdfs)
-
         def _run(emit):
             import types
+            emit("analyze", "Identificando hipótesis…")
             hyps = self.llm.get_hypotheses({"symptoms": symptoms, "mode": mode, "pdfs": pdfs})
+            emit("analyze", "Generando diagnóstico…")
             ctx = types.SimpleNamespace(symptoms=symptoms, hypotheses=hyps, pdfs=pdfs)
             diag = self.llm.get_diagnosis(ctx)
             return hyps, diag
 
         self._run_worker("analyze", _run)
 
-    def _run_worker(self, kind: str, fn):
+    def _run_worker(self, kind: str, fn, first_message: str | None = None):
         if self._worker and self._worker.isRunning():
             return
+        self._first_message_for_title = first_message
         self._worker = _LLMWorker(fn, kind)
         self._worker.finished.connect(self._on_done, Qt.ConnectionType.QueuedConnection)
         self._worker.failed.connect(self._on_error, Qt.ConnectionType.QueuedConnection)
@@ -219,7 +241,9 @@ class Controller(QObject):
         self._worker.start()
 
     def _on_progress(self, kind: str, text: str):
-        if kind == "chat" and self._typing_bubble:
+        if kind == "analyze":
+            self.view.set_processing_status(text)
+        elif self._typing_bubble:
             self._typing_bubble.set_content(text)
             self._typing_bubble.repaint()
 
@@ -242,27 +266,23 @@ class Controller(QObject):
                 self.view.set_pdf_count(len(self.model.pdfs))
                 self._auto_save()
 
-                sev_icons = {"high": "● ALTO", "medium": "◐ MEDIO", "low": "○ BAJO"}
-                sev = sev_icons.get(diag.get("severity", "medium"), "")
-                lines = [
-                    f"**Análisis: {sev}**",
-                    "",
-                    f"**{diag.get('diagnosis', '')}**",
-                    "",
-                    diag.get("summary", ""),
-                    "",
-                    "─────────────────────",
-                    "**Hipótesis:**",
-                    "",
-                ]
-                for h in sorted(hyps, key=lambda x: x.get("score", 0), reverse=True):
-                    icon = {"high": "●", "medium": "◐", "low": "○"}.get(h.get("severity", "medium"), "•")
-                    lines.append(f"- {icon} **{h['name']}** — {int(h.get('score', 0) * 100)}%")
-                    if h.get("detail"):
-                        lines.append(f"  {h['detail']}")
-                self.view.add_chat_message("assistant", "\n".join(lines))
+                title = diag.get("diagnosis", "")
+                summary = diag.get("summary", "")
+                n_hyps = len(hyps)
+                msg = f"**{title}**\n\n{summary}"
+                if n_hyps:
+                    msg += f"\n\nHe identificado {n_hyps} hipótesis. Puedes consultarlas en el panel derecho."
+
+                ts = datetime.now().strftime("%H:%M")
+                self.view.add_chat_message("assistant", msg, timestamp=ts)
+                self.model.chat_history.append({"role": "assistant", "content": msg, "timestamp": ts})
                 self.view.add_regenerate_button(self.analyze)
-                self.view.show_conversations(load_convs())
+                if self._is_new_conv:
+                    self._is_new_conv = False
+                    first = "\n".join(self.model.symptoms)[:300]
+                    self._generate_title_async(first)
+                else:
+                    self.view.show_conversations(load_convs())
 
             elif kind == "chat":
                 self._stream_text = ""
@@ -274,6 +294,14 @@ class Controller(QObject):
                     self.view.add_chat_message("assistant", result, timestamp=ts)
                 self.model.chat_history.append({"role": "assistant", "content": result, "timestamp": ts})
                 self._auto_save()
+                if self._is_new_conv and self._first_message_for_title:
+                    self._is_new_conv = False
+                    first = self._first_message_for_title
+                    self._first_message_for_title = None
+                    self.view.show_conversations(load_convs())
+                    self._generate_title_async(first)
+                else:
+                    self.view.show_conversations(load_convs())
         except Exception as exc:
             self.view.show_status_error(f"Error procesando respuesta: {exc}")
         finally:
@@ -291,12 +319,16 @@ class Controller(QObject):
     # ── Other actions ─────────────────────────────────────────
 
     def send_chat(self, text: str):
+        if not self.model.current_conv_id:
+            self.model.current_conv_id = new_conv_id()
+            self._is_new_conv = True
         ts = datetime.now().strftime("%H:%M")
         self.view.add_chat_message("user", text, timestamp=ts)
         self.model.chat_history.append({"role": "user", "content": text, "timestamp": ts})
         case_text = "\n".join(self.view.get_symptoms())
         pdfs = list(self.model.pdfs)
         history = list(self.model.chat_history)
+        first_message = text if self._is_new_conv else None
         self.view.set_running(True)
         self._typing_bubble = self.view.show_typing_indicator()
 
@@ -306,7 +338,33 @@ class Controller(QObject):
                 on_token=lambda t: emit("chat", t)
             )
 
-        self._run_worker("chat", _run)
+        self._run_worker("chat", _run, first_message=first_message)
+
+    def _generate_title_async(self, first_message: str):
+        conv_id = self.model.current_conv_id
+
+        def _run(emit):
+            return self.llm.generate_title(first_message)
+
+        worker = _LLMWorker(_run, "title")
+        worker.finished.connect(
+            lambda kind, title: self._on_title_generated(conv_id, title),
+            Qt.ConnectionType.QueuedConnection,
+        )
+        worker.failed.connect(
+            lambda kind, err: self.view.show_conversations(load_convs()),
+            Qt.ConnectionType.QueuedConnection,
+        )
+        worker.start()
+        self._title_worker = worker  # keep reference alive
+
+    def _on_title_generated(self, conv_id: str, title: str):
+        if not conv_id:
+            return
+        self._pending_name = title
+        self.view.set_case_title(title)
+        self._auto_save()
+        self.view.show_conversations(load_convs())
 
     def show_justification(self):
         self.view.show_justification(self.model.justification)
@@ -428,20 +486,77 @@ class Controller(QObject):
         self._auto_save()
         self.view.show_conversations(load_convs())
 
-    def export_diagnosis(self):
+    def show_export_menu(self):
+        self.view.show_export_menu(
+            on_pdf=self.export_pdf,
+            on_docx=self.export_docx,
+            on_print=self.print_diagnosis,
+            on_csv=self.export_csv,
+            on_email=self.share_email,
+        )
+
+    def export_pdf(self):
         if not self.model.diagnosis:
             self.view.add_chat_message("assistant", "No hay diagnóstico para exportar.")
             return
         path, _ = QFileDialog.getSaveFileName(
-            self.view, "Exportar diagnóstico", "diagnostico.pdf", "PDF Files (*.pdf)"
+            self.view, "Exportar PDF", "diagnostico.pdf", "PDF Files (*.pdf)"
         )
         if not path:
             return
         try:
             self.export_service.export_pdf(path, self.model.diagnosis, self.model.hypotheses)
-            self.view.add_chat_message("assistant", f"Exportado en:\n{path}")
+            self.view.add_chat_message("assistant", f"PDF exportado:\n{path}")
         except Exception as e:
             self.view.show_status_error(f"Error al exportar: {e}")
+
+    def export_docx(self):
+        if not self.model.diagnosis:
+            self.view.add_chat_message("assistant", "No hay diagnóstico para exportar.")
+            return
+        path, _ = QFileDialog.getSaveFileName(
+            self.view, "Exportar Word", "diagnostico.docx", "Word Documents (*.docx)"
+        )
+        if not path:
+            return
+        try:
+            self.export_service.export_docx(path, self.model.diagnosis, self.model.hypotheses)
+            self.view.add_chat_message("assistant", f"Word exportado:\n{path}")
+        except Exception as e:
+            self.view.show_status_error(f"Error al exportar: {e}")
+
+    def print_diagnosis(self):
+        if not self.model.diagnosis:
+            self.view.add_chat_message("assistant", "No hay diagnóstico para imprimir.")
+            return
+        try:
+            self.view.print_diagnosis(self.model.diagnosis, self.model.hypotheses)
+        except Exception as e:
+            self.view.show_status_error(f"Error al imprimir: {e}")
+
+    def export_csv(self):
+        if not self.model.chat_history:
+            self.view.add_chat_message("assistant", "No hay historial para exportar.")
+            return
+        path, _ = QFileDialog.getSaveFileName(
+            self.view, "Exportar historial CSV", "historial.csv", "CSV Files (*.csv)"
+        )
+        if not path:
+            return
+        try:
+            self.export_service.export_csv(path, self.model.chat_history)
+            self.view.add_chat_message("assistant", f"Historial exportado:\n{path}")
+        except Exception as e:
+            self.view.show_status_error(f"Error al exportar: {e}")
+
+    def share_email(self):
+        if not self.model.diagnosis:
+            self.view.add_chat_message("assistant", "No hay diagnóstico para compartir.")
+            return
+        try:
+            self.export_service.share_email(self.model.diagnosis, self.model.hypotheses)
+        except Exception as e:
+            self.view.show_status_error(f"Error al abrir email: {e}")
 
     def open_pdf_manager(self):
         self.view.show_pdf_window(self.model.pdfs)

@@ -1327,6 +1327,10 @@ class ProcessingWidget(QFrame):
         if self._on_done:
             self._on_done()
 
+    def set_status(self, text: str):
+        if self._dot_timer.isActive():
+            self._lbl.setText(text)
+
     def _tick(self):
         self._dot_idx = (self._dot_idx + 1) % len(self._DOTS)
         self._spinner.setText(self._DOTS[self._dot_idx])
@@ -2354,6 +2358,7 @@ class MainWindow(QMainWindow):
         QShortcut(QKeySequence("Ctrl+K"), self).activated.connect(self._search_bar.setFocus)
         QShortcut(QKeySequence("Escape"), self).activated.connect(self._close_open_drawer)
         QShortcut(QKeySequence("Ctrl+?"), self).activated.connect(self._show_shortcuts)
+        QShortcut(QKeySequence("Ctrl+P"), self).activated.connect(self._on_print_shortcut)
 
         self.apply_theme()
 
@@ -2419,6 +2424,7 @@ class MainWindow(QMainWindow):
         shortcuts = [
             ("Ctrl+Enter", "Analizar caso"),
             ("Ctrl+K", "Buscar en el chat"),
+            ("Ctrl+P", "Imprimir diagnóstico"),
             ("Ctrl+?", "Mostrar atajos"),
             ("Escape", "Cerrar panel / overlay"),
         ]
@@ -2441,6 +2447,16 @@ class MainWindow(QMainWindow):
         close.clicked.connect(dlg.accept)
         lay.addWidget(close, alignment=Qt.AlignmentFlag.AlignRight)
         dlg.exec()
+
+    def _on_print_shortcut(self):
+        # Emitted via signal so controller can intercept; fallback is a no-op if not connected yet
+        if hasattr(self, "_print_callback") and self._print_callback:
+            self._print_callback()
+
+    def on_print(self, callback):
+        self._print_callback = callback
+        # also reconnect the shortcut action label we wired above
+        # (shortcut already calls _on_print_shortcut which delegates here)
 
     def _close_open_drawer(self):
         if self._just_drawer.is_open():
@@ -2533,6 +2549,9 @@ class MainWindow(QMainWindow):
         if not is_running:
             self._timeline.set_done()
 
+    def set_processing_status(self, text: str):
+        self._timeline.set_status(text)
+
     def show_status_error(self, message: str):
         self._status.showMessage(f"⚠ {message}")
 
@@ -2577,7 +2596,7 @@ class MainWindow(QMainWindow):
         self._chat_send_cb(text)
 
     def on_justify_clicked(self, callback):
-        self._on_justify_cb = callback
+        self._results.set_on_justify(callback)
 
     def on_pdf_clicked(self, callback):
         # Gestionar PDFs: in V3 the tray is always visible; wire to opening the detail viewer
@@ -2631,6 +2650,72 @@ class MainWindow(QMainWindow):
 
     def on_export_clicked(self, callback):
         self._results.set_on_export(callback)
+
+    def show_export_menu(self, on_pdf, on_docx, on_print, on_csv, on_email):
+        from PyQt6.QtWidgets import QMenu
+        from PyQt6.QtGui import QAction, QCursor
+        menu = QMenu(self)
+        menu.setStyleSheet(self.styleSheet())
+
+        a_pdf = QAction("Exportar PDF", menu)
+        a_pdf.triggered.connect(on_pdf)
+        a_docx = QAction("Exportar Word (.docx)", menu)
+        a_docx.triggered.connect(on_docx)
+        a_print = QAction("Imprimir…  Ctrl+P", menu)
+        a_print.triggered.connect(on_print)
+        menu.addSeparator()
+        a_csv = QAction("Exportar historial CSV", menu)
+        a_csv.triggered.connect(on_csv)
+        a_email = QAction("Compartir por email", menu)
+        a_email.triggered.connect(on_email)
+
+        for action in [a_pdf, a_docx, a_print]:
+            menu.addAction(action)
+        menu.addSeparator()
+        menu.addAction(a_csv)
+        menu.addAction(a_email)
+
+        menu.exec(QCursor.pos())
+
+    def print_diagnosis(self, diagnosis: dict, hypotheses: list):
+        from PyQt6.QtPrintSupport import QPrinter, QPrintDialog
+        from PyQt6.QtGui import QTextDocument
+
+        sev_labels = {"high": "ALTO", "medium": "MEDIO", "low": "BAJO"}
+        sev_colors = {"high": "#d33535", "medium": "#c57a0d", "low": "#1a9452"}
+        sev = diagnosis.get("severity", "medium")
+        sev_color = sev_colors.get(sev, "#333")
+        sev_label = sev_labels.get(sev, "")
+        diag_title = diagnosis.get("diagnosis", "")
+        diag_summary = diagnosis.get("summary", "")
+
+        lines = [
+            f"<h2>{diag_title}</h2>",
+            f"<p><b>Gravedad:</b> <span style='color:{sev_color}'>{sev_label}</span></p>",
+            f"<h3>Resumen</h3><p>{diag_summary}</p>",
+        ]
+        justification = diagnosis.get("justification", [])
+        if justification:
+            lines.append("<h3>Justificación</h3>")
+            for s in justification:
+                lines.append(f"<p><b>{s.get('heading','')}</b><br>{s.get('body','')}</p>")
+        if hypotheses:
+            lines.append("<h3>Hipótesis</h3><ul>")
+            for h in sorted(hypotheses, key=lambda x: x.get("score", 0), reverse=True):
+                pct = int(h.get("score", 0) * 100)
+                lines.append(f"<li><b>{h.get('name','')} — {pct}%</b>"
+                              + (f"<br><small>{h['detail']}</small>" if h.get("detail") else "")
+                              + "</li>")
+            lines.append("</ul>")
+        lines.append("<hr><small>Generado por ISSBC · Diagnóstico Legal Asistido por IA</small>")
+
+        doc = QTextDocument()
+        doc.setHtml("".join(lines))
+
+        printer = QPrinter(QPrinter.PrinterMode.HighResolution)
+        dlg = QPrintDialog(printer, self)
+        if dlg.exec() == QPrintDialog.DialogCode.Accepted:
+            doc.print(printer)
 
     def on_save_case(self, callback):
         self._save_btn.clicked.connect(callback)

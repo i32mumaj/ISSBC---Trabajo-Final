@@ -1,4 +1,7 @@
+import csv
 import textwrap
+import urllib.parse
+import webbrowser
 from datetime import datetime
 from pathlib import Path
 
@@ -145,3 +148,103 @@ class ExportService:
 
         doc.save(path)
         doc.close()
+
+    def export_docx(self, path: str, diagnosis: dict, hypotheses: list) -> None:
+        from docx import Document
+        from docx.shared import Pt, RGBColor
+        from docx.enum.text import WD_ALIGN_PARAGRAPH
+
+        sev_labels = {"high": "ALTO", "medium": "MEDIO", "low": "BAJO"}
+        sev_colors = {
+            "high": RGBColor(0xD3, 0x35, 0x35),
+            "medium": RGBColor(0xC5, 0x7A, 0x0D),
+            "low": RGBColor(0x1A, 0x94, 0x52),
+        }
+
+        doc = Document()
+
+        # narrow margins
+        for section in doc.sections:
+            section.top_margin = section.bottom_margin = Pt(48)
+            section.left_margin = section.right_margin = Pt(56)
+
+        # title
+        title_par = doc.add_heading(diagnosis.get("diagnosis", "Sin título"), level=1)
+        title_par.runs[0].font.size = Pt(18)
+
+        # severity
+        sev = diagnosis.get("severity", "medium")
+        sev_par = doc.add_paragraph()
+        run = sev_par.add_run(f"Gravedad: {sev_labels.get(sev, '—')}")
+        run.font.color.rgb = sev_colors.get(sev, RGBColor(0x55, 0x55, 0x55))
+        run.font.bold = True
+        run.font.size = Pt(10)
+
+        doc.add_paragraph()
+
+        # summary
+        doc.add_heading("Resumen", level=2)
+        doc.add_paragraph(diagnosis.get("summary", ""))
+
+        # justification
+        justification = diagnosis.get("justification", [])
+        if justification:
+            doc.add_heading("Justificación", level=2)
+            for section in justification:
+                h = doc.add_paragraph()
+                r = h.add_run(section.get("heading", ""))
+                r.bold = True
+                doc.add_paragraph(section.get("body", ""))
+
+        # hypotheses
+        if hypotheses:
+            doc.add_heading("Hipótesis", level=2)
+            for h in sorted(hypotheses, key=lambda x: x.get("score", 0), reverse=True):
+                pct = int(h.get("score", 0) * 100)
+                hsev = h.get("severity", "medium")
+                p = doc.add_paragraph(style="List Bullet")
+                name_run = p.add_run(f"{h.get('name', '')}  —  {pct}%")
+                name_run.bold = True
+                name_run.font.color.rgb = sev_colors.get(hsev, RGBColor(0x55, 0x55, 0x55))
+                if h.get("detail"):
+                    detail_p = doc.add_paragraph(h["detail"])
+                    detail_p.paragraph_format.left_indent = Pt(18)
+
+        # footer note
+        doc.add_paragraph()
+        foot = doc.add_paragraph()
+        foot.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+        r = foot.add_run(f"Generado por ISSBC · {datetime.now().strftime('%d/%m/%Y %H:%M')}")
+        r.font.size = Pt(8)
+        r.font.color.rgb = RGBColor(0x99, 0x99, 0x99)
+
+        doc.save(path)
+
+    def export_csv(self, path: str, chat_history: list) -> None:
+        with open(path, "w", newline="", encoding="utf-8-sig") as f:
+            writer = csv.writer(f)
+            writer.writerow(["timestamp", "role", "content"])
+            for msg in chat_history:
+                writer.writerow([
+                    msg.get("timestamp", ""),
+                    msg.get("role", ""),
+                    msg.get("content", ""),
+                ])
+
+    def share_email(self, diagnosis: dict, hypotheses: list) -> None:
+        sev_labels = {"high": "ALTO", "medium": "MEDIO", "low": "BAJO"}
+        title = diagnosis.get("diagnosis", "Diagnóstico legal")
+        sev = sev_labels.get(diagnosis.get("severity", "medium"), "")
+        summary = diagnosis.get("summary", "")
+
+        lines = [f"DIAGNÓSTICO: {title}", f"Gravedad: {sev}", "", summary, "", "HIPÓTESIS:"]
+        for h in sorted(hypotheses, key=lambda x: x.get("score", 0), reverse=True):
+            pct = int(h.get("score", 0) * 100)
+            lines.append(f"- {h.get('name', '')} ({pct}%)")
+            if h.get("detail"):
+                lines.append(f"  {h['detail']}")
+        lines += ["", "---", "Generado por ISSBC · Diagnóstico Legal Asistido por IA"]
+
+        body = urllib.parse.quote("\n".join(lines))
+        subject = urllib.parse.quote(f"Diagnóstico legal: {title}")
+        webbrowser.open(f"mailto:?subject={subject}&body={body}")
