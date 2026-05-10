@@ -274,9 +274,11 @@ class Controller(QObject):
                     msg += f"\n\nHe identificado {n_hyps} hipótesis. Puedes consultarlas en el panel derecho."
 
                 ts = datetime.now().strftime("%H:%M")
-                self.view.add_chat_message("assistant", msg, timestamp=ts)
+                bubble = self.view.add_chat_message("assistant", "", timestamp=ts)
+                bubble.typewriter(msg)
                 self.model.chat_history.append({"role": "assistant", "content": msg, "timestamp": ts})
                 self.view.add_regenerate_button(self.analyze)
+                self.view.notify_analysis_done()
                 if self._is_new_conv:
                     self._is_new_conv = False
                     first = "\n".join(self.model.symptoms)[:300]

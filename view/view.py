@@ -2,7 +2,8 @@ from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
     QListWidget, QLabel, QTextEdit, QFileDialog, QDialog, QFrame, QSizePolicy,
     QListWidgetItem, QStackedWidget, QSplitter, QScrollArea, QProgressBar,
-    QScrollBar, QLineEdit, QAbstractScrollArea
+    QScrollBar, QLineEdit, QAbstractScrollArea, QGraphicsOpacityEffect,
+    QSystemTrayIcon, QStyle
 )
 from datetime import date as _date
 from PyQt6.QtCore import Qt, QTimer, QPropertyAnimation, QEasingCurve, QRect
@@ -758,6 +759,9 @@ class HypothesisBar(QFrame):
         name_lbl = QLabel(hyp.get("name", ""))
         name_lbl.setStyleSheet("font-size: 12px; font-weight: 500; background: transparent;")
         name_lbl.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        detail = hyp.get("detail", "")
+        if detail:
+            self.setToolTip(f"{hyp.get('name','')}\n\n{detail}")
         top.addWidget(name_lbl, 1)
 
         pct_lbl = QLabel(f"{pct}%")
@@ -1468,6 +1472,7 @@ class ConversationOverlay(QFrame):
             updated = c.get("updated_at", "")[:16].replace("T", " ")
             item = QListWidgetItem(f"{name}\n{updated}")
             item.setData(Qt.ItemDataRole.UserRole, c["id"])
+            item.setToolTip(name)
             self._list.addItem(item)
 
     def update_theme(self, theme):
@@ -1533,6 +1538,28 @@ class PdfTray(QFrame):
         self._list.setIconSize(QPixmap(20, 26).size())
         self._list.itemDoubleClicked.connect(self._on_double_click)
         lay.addWidget(self._list, 1)
+
+        self._empty_state = QFrame()
+        self._empty_state.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        es_lay = QVBoxLayout(self._empty_state)
+        es_lay.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        es_icon = QLabel("📄")
+        es_icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        es_icon.setStyleSheet("font-size: 32px; background: transparent;")
+        es_title = QLabel("Sin documentos")
+        es_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        es_title.setStyleSheet(f"font-size: 12px; font-weight: 600; color: {theme['text_subtle']}; background: transparent;")
+        es_hint = QLabel("Arrastra PDFs aquí o usa\nel botón + Añadir")
+        es_hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        es_hint.setWordWrap(True)
+        es_hint.setObjectName("mono")
+        es_hint.setStyleSheet(f"font-size: 11px; color: {theme['text_subtle']}; background: transparent;")
+        es_lay.addWidget(es_icon)
+        es_lay.addSpacing(6)
+        es_lay.addWidget(es_title)
+        es_lay.addSpacing(4)
+        es_lay.addWidget(es_hint)
+        lay.addWidget(self._empty_state, 1)
 
         self._load_bar = QProgressBar()
         self._load_bar.setFixedHeight(3)
@@ -1654,9 +1681,12 @@ class PdfTray(QFrame):
         for pdf in pdfs:
             item = QListWidgetItem(icon, pdf.get("name", ""))
             item.setData(Qt.ItemDataRole.UserRole, pdf.get("path", ""))
+            item.setToolTip(pdf.get("path", pdf.get("name", "")))
             self._list.addItem(item)
         if pdfs:
             self._list.setCurrentRow(0)
+        self._list.setVisible(bool(pdfs))
+        self._empty_state.setVisible(not bool(pdfs))
 
     def _filter_list(self, query: str):
         query = query.strip().lower()
@@ -2096,9 +2126,37 @@ class ChatBubble(QFrame):
         il.addWidget(self._content_lbl)
         outer.addWidget(inner)
 
+        self._fade_eff = QGraphicsOpacityEffect(self)
+        self._fade_eff.setOpacity(0.0)
+        self.setGraphicsEffect(self._fade_eff)
+        self._fade_anim = QPropertyAnimation(self._fade_eff, b"opacity", self)
+        self._fade_anim.setDuration(220)
+        self._fade_anim.setStartValue(0.0)
+        self._fade_anim.setEndValue(1.0)
+        self._fade_anim.setEasingCurve(QEasingCurve.Type.OutCubic)
+        QTimer.singleShot(0, self._fade_anim.start)
+
+        self._tw_timer: QTimer | None = None
+
     def set_content(self, text: str):
         self._raw_content = text
         self._content_lbl.setText(_md_to_html(text))
+
+    def typewriter(self, text: str, chars_per_tick: int = 6, interval_ms: int = 18):
+        self._tw_full = text
+        self._tw_pos = 0
+        self._tw_chars = chars_per_tick
+        if self._tw_timer:
+            self._tw_timer.stop()
+        self._tw_timer = QTimer(self)
+        self._tw_timer.timeout.connect(self._tw_tick)
+        self._tw_timer.start(interval_ms)
+
+    def _tw_tick(self):
+        self._tw_pos = min(self._tw_pos + self._tw_chars, len(self._tw_full))
+        self.set_content(self._tw_full[:self._tw_pos])
+        if self._tw_pos >= len(self._tw_full):
+            self._tw_timer.stop()
 
     def _copy_text(self):
         QGuiApplication.clipboard().setText(self._raw_content)
@@ -2394,6 +2452,14 @@ class MainWindow(QMainWindow):
         self.is_dark_mode = not self.is_dark_mode
         self.apply_theme()
 
+        # System tray for background notifications
+        self._sys_tray = QSystemTrayIcon(self)
+        self._sys_tray.setIcon(
+            self.style().standardIcon(QStyle.StandardPixmap.SP_MessageBoxInformation)
+        )
+        if QSystemTrayIcon.isSystemTrayAvailable():
+            self._sys_tray.show()
+
     # ── Drawer helpers ─────────────────────────────────────────
 
     def _open_just_drawer(self):
@@ -2548,6 +2614,13 @@ class MainWindow(QMainWindow):
         self._update_status_running(is_running)
         if not is_running:
             self._timeline.set_done()
+
+    def notify_analysis_done(self):
+        if not self.isActiveWindow() and QSystemTrayIcon.isSystemTrayAvailable():
+            self._sys_tray.showMessage(
+                "ISSBC", "Análisis completado",
+                QSystemTrayIcon.MessageIcon.Information, 3000,
+            )
 
     def set_processing_status(self, text: str):
         self._timeline.set_status(text)
