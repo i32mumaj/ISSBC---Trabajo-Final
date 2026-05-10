@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from PyQt6.QtCore import QObject, QThread, pyqtSignal, Qt
+from PyQt6.QtCore import QObject, QThread, pyqtSignal, Qt, QTimer
 from PyQt6.QtWidgets import QFileDialog
 
 from services.export_service import ExportService
@@ -62,6 +62,10 @@ class Controller(QObject):
         self._typing_bubble = None
         self._pending_name: str | None = None
         self._stream_text: str = ""
+        self._autosave_timer = QTimer()
+        self._autosave_timer.setInterval(30_000)
+        self._autosave_timer.timeout.connect(self._auto_save)
+        self._autosave_timer.start()
         self._connect()
         self._restore_session()
 
@@ -220,57 +224,60 @@ class Controller(QObject):
             self._typing_bubble.repaint()
 
     def _on_done(self, kind: str, result):
-        if kind == "analyze":
-            hyps, diag = result
-            self.model.hypotheses = hyps
-            self.model.diagnosis = diag
-            self.model.justification = diag.get("justification", diag.get("summary", ""))
-            now = datetime.now()
-            months = ["ene","feb","mar","abr","may","jun","jul","ago","sep","oct","nov","dic"]
-            self.model.history.insert(0, {
-                "label": diag.get("diagnosis", "Análisis"),
-                "severity": diag.get("severity", "medium"),
-                "when": f"{now.day} {months[now.month - 1]} · {now.strftime('%H:%M')}",
-            })
-            self.view.show_hypotheses(hyps)
-            self.view.show_diagnosis(diag)
-            self.view.set_pdf_count(len(self.model.pdfs))
-            self._auto_save()
+        try:
+            if kind == "analyze":
+                hyps, diag = result
+                self.model.hypotheses = hyps
+                self.model.diagnosis = diag
+                self.model.justification = diag.get("justification", diag.get("summary", ""))
+                now = datetime.now()
+                months = ["ene","feb","mar","abr","may","jun","jul","ago","sep","oct","nov","dic"]
+                self.model.history.insert(0, {
+                    "label": diag.get("diagnosis", "Análisis"),
+                    "severity": diag.get("severity", "medium"),
+                    "when": f"{now.day} {months[now.month - 1]} · {now.strftime('%H:%M')}",
+                })
+                self.view.show_hypotheses(hyps)
+                self.view.show_diagnosis(diag)
+                self.view.set_pdf_count(len(self.model.pdfs))
+                self._auto_save()
 
-            sev_icons = {"high": "● ALTO", "medium": "◐ MEDIO", "low": "○ BAJO"}
-            sev = sev_icons.get(diag.get("severity", "medium"), "")
-            lines = [
-                f"**Análisis: {sev}**",
-                "",
-                f"**{diag.get('diagnosis', '')}**",
-                "",
-                diag.get("summary", ""),
-                "",
-                "─────────────────────",
-                "**Hipótesis:**",
-                "",
-            ]
-            for h in sorted(hyps, key=lambda x: x.get("score", 0), reverse=True):
-                icon = {"high": "●", "medium": "◐", "low": "○"}.get(h.get("severity", "medium"), "•")
-                lines.append(f"- {icon} **{h['name']}** — {int(h.get('score', 0) * 100)}%")
-                if h.get("detail"):
-                    lines.append(f"  {h['detail']}")
-            self.view.add_chat_message("assistant", "\n".join(lines))
-            self.view.add_regenerate_button(self.analyze)
-            self.view.show_conversations(load_convs())
+                sev_icons = {"high": "● ALTO", "medium": "◐ MEDIO", "low": "○ BAJO"}
+                sev = sev_icons.get(diag.get("severity", "medium"), "")
+                lines = [
+                    f"**Análisis: {sev}**",
+                    "",
+                    f"**{diag.get('diagnosis', '')}**",
+                    "",
+                    diag.get("summary", ""),
+                    "",
+                    "─────────────────────",
+                    "**Hipótesis:**",
+                    "",
+                ]
+                for h in sorted(hyps, key=lambda x: x.get("score", 0), reverse=True):
+                    icon = {"high": "●", "medium": "◐", "low": "○"}.get(h.get("severity", "medium"), "•")
+                    lines.append(f"- {icon} **{h['name']}** — {int(h.get('score', 0) * 100)}%")
+                    if h.get("detail"):
+                        lines.append(f"  {h['detail']}")
+                self.view.add_chat_message("assistant", "\n".join(lines))
+                self.view.add_regenerate_button(self.analyze)
+                self.view.show_conversations(load_convs())
 
-        elif kind == "chat":
-            self._stream_text = ""
-            ts = datetime.now().strftime("%H:%M")
-            if self._typing_bubble:
-                self._typing_bubble.set_content(result)
-                self._typing_bubble = None
-            else:
-                self.view.add_chat_message("assistant", result, timestamp=ts)
-            self.model.chat_history.append({"role": "assistant", "content": result, "timestamp": ts})
-            self._auto_save()
-
-        self.view.set_running(False)
+            elif kind == "chat":
+                self._stream_text = ""
+                ts = datetime.now().strftime("%H:%M")
+                if self._typing_bubble:
+                    self._typing_bubble.set_content(result)
+                    self._typing_bubble = None
+                else:
+                    self.view.add_chat_message("assistant", result, timestamp=ts)
+                self.model.chat_history.append({"role": "assistant", "content": result, "timestamp": ts})
+                self._auto_save()
+        except Exception as exc:
+            self.view.show_status_error(f"Error procesando respuesta: {exc}")
+        finally:
+            self.view.set_running(False)
 
     def _on_error(self, kind: str, error_msg: str):
         self._stream_text = ""
@@ -418,6 +425,7 @@ class Controller(QObject):
             self.view.show_hypotheses(self.model.hypotheses)
         if self.model.diagnosis:
             self.view.show_diagnosis(self.model.diagnosis)
+        self._auto_save()
         self.view.show_conversations(load_convs())
 
     def export_diagnosis(self):

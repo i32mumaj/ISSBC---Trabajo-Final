@@ -8,7 +8,7 @@ from datetime import date as _date
 from PyQt6.QtCore import Qt, QTimer, QPropertyAnimation, QEasingCurve, QRect
 from PyQt6.QtGui import (
     QFont, QImage, QPixmap, QGuiApplication, QIcon, QPainter, QColor,
-    QKeySequence, QPen, QPainterPath, QShortcut
+    QKeySequence, QPen, QPainterPath, QShortcut, QSyntaxHighlighter, QTextCharFormat
 )
 
 try:
@@ -17,6 +17,80 @@ try:
 except Exception:
     fitz = None
     PDF_PREVIEW_AVAILABLE = False
+
+try:
+    from spellchecker import SpellChecker as _SpellChecker
+    _spell = _SpellChecker(language="es")
+    _spell_personal: set[str] = set()
+    SPELL_AVAILABLE = True
+except Exception:
+    _spell = None
+    _spell_personal = set()
+    SPELL_AVAILABLE = False
+
+
+def _spell_unknown(words: list[str]) -> set[str]:
+    if not SPELL_AVAILABLE:
+        return set()
+    clean = [w.lower().strip(".,;:()[]¿?¡!\"'—–") for w in words]
+    return _spell.unknown([w for w in clean if w and not w.isdigit()]) - _spell_personal
+
+
+class SpellHighlighter(QSyntaxHighlighter):
+    _fmt = QTextCharFormat()
+    _fmt.setUnderlineStyle(QTextCharFormat.UnderlineStyle.SpellCheckUnderline)
+    _fmt.setUnderlineColor(QColor("#e53e3e"))
+
+    def highlightBlock(self, text: str):
+        if not SPELL_AVAILABLE:
+            return
+        import re
+        for m in re.finditer(r"\b[A-Za-záéíóúüñÁÉÍÓÚÜÑ]+\b", text):
+            word = m.group()
+            if word.lower().strip() in _spell_personal:
+                continue
+            if _spell.unknown([word.lower()]):
+                self.setFormat(m.start(), len(word), self._fmt)
+
+
+class SpellEditor(QTextEdit):
+    def contextMenuEvent(self, event):
+        from PyQt6.QtGui import QTextCursor
+        cursor = self.cursorForPosition(event.pos())
+        cursor.select(QTextCursor.SelectionType.WordUnderCursor)
+        word = cursor.selectedText().strip(".,;:()[]¿?¡!\"'—–")
+
+        menu = self.createStandardContextMenu()
+
+        if word and SPELL_AVAILABLE and _spell.unknown([word.lower()]) and word.lower() not in _spell_personal:
+            from PyQt6.QtGui import QAction
+            candidates = list(_spell.candidates(word.lower()) or [])[:6]
+            actions = menu.actions()
+            ref = actions[0] if actions else None
+
+            # separator between spell block and standard actions
+            menu.insertSeparator(ref)
+
+            add_act = QAction(f'Añadir "{word}" al diccionario', menu)
+            add_act.triggered.connect(lambda checked, w=word: self._add_to_personal(w))
+            menu.insertAction(ref, add_act)
+
+            for suggestion in reversed(candidates):
+                act = QAction(suggestion, menu)
+                act.triggered.connect(
+                    lambda checked, c=cursor, s=suggestion: self._apply_suggestion(c, s)
+                )
+                menu.insertAction(add_act, act)
+
+        menu.exec(event.globalPos())
+
+    def _apply_suggestion(self, cursor, suggestion: str):
+        cursor.insertText(suggestion)
+
+    def _add_to_personal(self, word: str):
+        _spell_personal.add(word.lower())
+        if hasattr(self, "_highlighter"):
+            self._highlighter.rehighlight()
 
 
 # ── Color tokens (cool neutral SaaS) ─────────────────────────────────────────
@@ -67,6 +141,213 @@ TIMELINE_STEPS = [
     ("s5", "Generando hipótesis"),
 ]
 TIMELINE_STEP_MS = [350, 800, 700, 900, 600]
+
+TEMPLATES = {
+    "Despido improcedente": (
+        "El trabajador prestó servicios para [EMPRESA] desde [FECHA INICIO] con categoría de [CATEGORÍA] "
+        "y salario mensual de [SALARIO] €.\n\n"
+        "El [FECHA DESPIDO] la empresa comunicó el despido disciplinario mediante carta, alegando [MOTIVO ALEGADO].\n\n"
+        "El trabajador niega los hechos imputados y no ha sido sancionado previamente por hechos similares. "
+        "Solicita que se declare el despido improcedente y se le readmita o indemnice conforme al ET."
+    ),
+    "Despido objetivo": (
+        "El trabajador prestó servicios para [EMPRESA] desde [FECHA INICIO] como [CATEGORÍA], "
+        "con salario de [SALARIO] €/mes.\n\n"
+        "El [FECHA] la empresa comunicó un despido por causas objetivas, alegando [CAUSA: económica / organizativa / productiva / técnica]. "
+        "Se abonó/no se abonó la indemnización de 20 días por año.\n\n"
+        "El trabajador considera que la causa alegada no está debidamente acreditada y solicita la improcedencia."
+    ),
+    "Arrendamiento urbano": (
+        "El arrendador [NOMBRE ARRENDADOR] y el arrendatario [NOMBRE ARRENDATARIO] suscribieron un contrato de "
+        "arrendamiento el [FECHA CONTRATO] sobre el inmueble sito en [DIRECCIÓN], con una renta mensual de [RENTA] €.\n\n"
+        "El contrato tiene una duración de [DURACIÓN] años. El problema surgido es: [DESCRIPCIÓN DEL PROBLEMA].\n\n"
+        "Se adjuntan el contrato firmado y los justificantes de pago/impago."
+    ),
+    "Contrato mercantil": (
+        "Las partes, [PARTE A] y [PARTE B], celebraron un contrato de [TIPO] el [FECHA] "
+        "por importe de [IMPORTE] €, con objeto de [OBJETO].\n\n"
+        "La parte [INCUMPLIDORA] incumplió las obligaciones pactadas en la cláusula [N.º], "
+        "concretamente: [DESCRIPCIÓN]. Se requerió el cumplimiento el [FECHA REQUERIMIENTO] "
+        "sin respuesta satisfactoria."
+    ),
+    "Reclamación de cantidad": (
+        "El demandante [NOMBRE] reclama al demandado [NOMBRE] la cantidad de [IMPORTE] € "
+        "en concepto de [CONCEPTO: facturas impagadas / préstamo / indemnización].\n\n"
+        "La deuda tiene su origen en [DESCRIPCIÓN]. El vencimiento fue el [FECHA VENCIMIENTO]. "
+        "Pese a los requerimientos realizados el [FECHA], no se ha procedido al abono.\n\n"
+        "Se adjunta: [LISTAR DOCUMENTOS]."
+    ),
+    "Accidente laboral": (
+        "El trabajador [NOMBRE], empleado de [EMPRESA] como [CARGO], sufrió un accidente el [FECHA] "
+        "en el centro de trabajo sito en [LUGAR].\n\n"
+        "El accidente consistió en: [DESCRIPCIÓN DEL ACCIDENTE]. Las lesiones resultantes son: [LESIONES].\n\n"
+        "Se considera que el accidente se debió a [CAUSA: falta de medidas de seguridad / negligencia empresarial]. "
+        "Se solicitó parte de accidente y asistencia médica. El trabajador ha estado de baja desde [FECHA] hasta [FECHA]."
+    ),
+    "Herencia / testamento": (
+        "El causante [NOMBRE] falleció el [FECHA DE FALLECIMIENTO] en [LUGAR], con vecindad civil [VECINDAD].\n\n"
+        "Dejó testamento otorgado el [FECHA TESTAMENTO] ante el notario [NOTARIO], en el que [DESCRIPCIÓN DEL CONTENIDO: "
+        "instituyó heredero a / legó el bien X a / desheredó a...].\n\n"
+        "El conflicto surge porque [DESCRIPCIÓN DEL CONFLICTO]. "
+        "Los herederos implicados son: [LISTAR]. Se adjunta copia del testamento y certificado de defunción."
+    ),
+    "Daños y perjuicios": (
+        "El demandante [NOMBRE] sufrió daños el [FECHA] como consecuencia de [DESCRIPCIÓN DEL HECHO CAUSANTE], "
+        "imputable a [RESPONSABLE].\n\n"
+        "Los daños materiales ascienden a [IMPORTE] € y los daños morales/personales consisten en [DESCRIPCIÓN]. "
+        "Se han realizado los siguientes gastos acreditados: [LISTAR CON IMPORTES].\n\n"
+        "Se reclama la indemnización total de [IMPORTE TOTAL] € más intereses legales desde la fecha del siniestro."
+    ),
+}
+
+
+# ── Template fields (key must match [KEY] in TEMPLATES text) ─────────────────
+TEMPLATE_FIELDS = {
+    "Despido improcedente": [
+        ("EMPRESA", "Nombre de la empresa"),
+        ("FECHA INICIO", "Fecha de inicio (ej. enero 2020)"),
+        ("CATEGORÍA", "Categoría profesional"),
+        ("SALARIO", "Salario mensual (€)"),
+        ("FECHA DESPIDO", "Fecha del despido"),
+        ("MOTIVO ALEGADO", "Motivo alegado por la empresa"),
+    ],
+    "Despido objetivo": [
+        ("EMPRESA", "Nombre de la empresa"),
+        ("FECHA INICIO", "Fecha de inicio"),
+        ("CATEGORÍA", "Categoría profesional"),
+        ("SALARIO", "Salario mensual (€)"),
+        ("FECHA", "Fecha del despido"),
+        ("CAUSA: económica / organizativa / productiva / técnica", "Causa alegada"),
+    ],
+    "Arrendamiento urbano": [
+        ("NOMBRE ARRENDADOR", "Nombre del arrendador"),
+        ("NOMBRE ARRENDATARIO", "Nombre del arrendatario"),
+        ("FECHA CONTRATO", "Fecha del contrato"),
+        ("DIRECCIÓN", "Dirección del inmueble"),
+        ("RENTA", "Renta mensual (€)"),
+        ("DURACIÓN", "Duración del contrato (años)"),
+        ("DESCRIPCIÓN DEL PROBLEMA", "Descripción del problema"),
+    ],
+    "Contrato mercantil": [
+        ("PARTE A", "Primera parte"),
+        ("PARTE B", "Segunda parte"),
+        ("TIPO", "Tipo de contrato"),
+        ("FECHA", "Fecha del contrato"),
+        ("IMPORTE", "Importe (€)"),
+        ("OBJETO", "Objeto del contrato"),
+        ("INCUMPLIDORA", "Parte incumplidora"),
+        ("DESCRIPCIÓN", "Descripción del incumplimiento"),
+        ("FECHA REQUERIMIENTO", "Fecha del requerimiento"),
+    ],
+    "Reclamación de cantidad": [
+        ("NOMBRE", "Nombre del demandante"),
+        ("NOMBRE", "Nombre del demandado"),
+        ("IMPORTE", "Importe reclamado (€)"),
+        ("CONCEPTO: facturas impagadas / préstamo / indemnización", "Concepto"),
+        ("DESCRIPCIÓN", "Origen de la deuda"),
+        ("FECHA VENCIMIENTO", "Fecha de vencimiento"),
+        ("FECHA", "Fecha del requerimiento"),
+        ("LISTAR DOCUMENTOS", "Documentos adjuntos"),
+    ],
+    "Accidente laboral": [
+        ("NOMBRE", "Nombre del trabajador"),
+        ("EMPRESA", "Nombre de la empresa"),
+        ("CARGO", "Cargo / puesto"),
+        ("FECHA", "Fecha del accidente"),
+        ("LUGAR", "Lugar del accidente"),
+        ("DESCRIPCIÓN DEL ACCIDENTE", "Descripción del accidente"),
+        ("LESIONES", "Lesiones sufridas"),
+        ("CAUSA: falta de medidas de seguridad / negligencia empresarial", "Causa del accidente"),
+    ],
+    "Herencia / testamento": [
+        ("NOMBRE", "Nombre del causante"),
+        ("FECHA DE FALLECIMIENTO", "Fecha de fallecimiento"),
+        ("LUGAR", "Lugar de fallecimiento"),
+        ("VECINDAD", "Vecindad civil"),
+        ("FECHA TESTAMENTO", "Fecha del testamento"),
+        ("NOTARIO", "Notario autorizante"),
+        ("DESCRIPCIÓN DEL CONFLICTO", "Descripción del conflicto"),
+    ],
+    "Daños y perjuicios": [
+        ("NOMBRE", "Nombre del demandante"),
+        ("FECHA", "Fecha del hecho"),
+        ("DESCRIPCIÓN DEL HECHO CAUSANTE", "Descripción del hecho causante"),
+        ("RESPONSABLE", "Responsable / demandado"),
+        ("IMPORTE", "Daños materiales (€)"),
+        ("DESCRIPCIÓN", "Daños morales/personales"),
+        ("IMPORTE TOTAL", "Importe total reclamado (€)"),
+    ],
+}
+
+
+class TemplateFormDialog(QDialog):
+    """Form dialog that fills in template placeholders before inserting."""
+
+    def __init__(self, name: str, template_text: str, fields: list, theme: dict, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle(f"Plantilla: {name}")
+        self.setMinimumWidth(440)
+        self.setStyleSheet(parent.styleSheet() if parent else "")
+        self._template = template_text
+        self._inputs: list[tuple[str, QLineEdit]] = []
+
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(20, 16, 20, 16)
+        lay.setSpacing(10)
+
+        title = QLabel(name)
+        title.setStyleSheet("font-size: 14px; font-weight: 700;")
+        lay.addWidget(title)
+
+        subtitle = QLabel("Rellena los campos y pulsa Aplicar. Los que dejes vacíos quedarán como marcadores.")
+        subtitle.setObjectName("mono")
+        subtitle.setWordWrap(True)
+        lay.addWidget(subtitle)
+
+        sep = QFrame()
+        sep.setFrameShape(QFrame.Shape.HLine)
+        sep.setStyleSheet(f"color: {theme['border']};")
+        lay.addWidget(sep)
+
+        seen = set()
+        for key, label in fields:
+            if key in seen:
+                continue
+            seen.add(key)
+            row = QVBoxLayout()
+            row.setSpacing(2)
+            lbl = QLabel(label)
+            lbl.setStyleSheet("font-size: 11px; font-weight: 600;")
+            inp = QLineEdit()
+            inp.setPlaceholderText(f"[{key}]")
+            inp.setFixedHeight(30)
+            row.addWidget(lbl)
+            row.addWidget(inp)
+            lay.addLayout(row)
+            self._inputs.append((key, inp))
+
+        lay.addSpacing(4)
+        btns = QHBoxLayout()
+        btns.addStretch()
+        cancel_btn = QPushButton("Cancelar")
+        cancel_btn.setObjectName("ghost")
+        cancel_btn.setFixedHeight(32)
+        cancel_btn.clicked.connect(self.reject)
+        apply_btn = QPushButton("Aplicar plantilla")
+        apply_btn.setObjectName("primary")
+        apply_btn.setFixedHeight(32)
+        apply_btn.clicked.connect(self.accept)
+        btns.addWidget(cancel_btn)
+        btns.addWidget(apply_btn)
+        lay.addLayout(btns)
+
+    def filled_text(self) -> str:
+        text = self._template
+        for key, inp in self._inputs:
+            value = inp.text().strip()
+            if value:
+                text = text.replace(f"[{key}]", value)
+        return text
 
 
 def severity_color(theme, severity):
@@ -1951,23 +2232,30 @@ class MainWindow(QMainWindow):
         editor_header.addStretch()
         toolbar = QHBoxLayout()
         toolbar.setSpacing(4)
+        self._templates_btn = QPushButton("Plantillas ▾")
+        self._templates_btn.setObjectName("ghost")
+        self._templates_btn.setFixedHeight(28)
+        self._templates_btn.clicked.connect(self._show_templates_menu)
         self._clear_btn = QPushButton("Limpiar")
         self._clear_btn.setObjectName("ghost")
         self._clear_btn.setFixedHeight(28)
         self._paste_btn = QPushButton("Pegar")
         self._paste_btn.setObjectName("ghost")
         self._paste_btn.setFixedHeight(28)
+        toolbar.addWidget(self._templates_btn)
         toolbar.addWidget(self._clear_btn)
         toolbar.addWidget(self._paste_btn)
         editor_header.addLayout(toolbar)
         es_lay.addLayout(editor_header)
 
-        self._editor = QTextEdit()
+        self._editor = SpellEditor()
         self._editor.setFixedHeight(82)
         self._editor.setPlaceholderText(
             "Ej. El cliente firmó un contrato de arrendamiento en 2020 y…"
         )
         self._editor.textChanged.connect(self._update_status)
+        if SPELL_AVAILABLE:
+            self._editor._highlighter = SpellHighlighter(self._editor.document())
         es_lay.addWidget(self._editor)
 
         self._counter_lbl = QLabel("0 palabras · 0 caracteres")
@@ -2167,11 +2455,43 @@ class MainWindow(QMainWindow):
         if clip:
             self._editor.insertPlainText(clip.text())
 
+    def _show_templates_menu(self):
+        from PyQt6.QtWidgets import QMenu
+        from PyQt6.QtCore import QPoint
+        menu = QMenu(self)
+        menu.setStyleSheet(self.styleSheet())
+        for name in TEMPLATES:
+            menu.addAction(name, lambda n=name: self._apply_template(n))
+        pos = self._templates_btn.mapToGlobal(QPoint(0, self._templates_btn.height()))
+        menu.exec(pos)
+
+    def _apply_template(self, name: str):
+        from PyQt6.QtWidgets import QMessageBox
+        theme = DARK_THEME if self.is_dark_mode else LIGHT_THEME
+        fields = TEMPLATE_FIELDS.get(name, [])
+        if fields:
+            dlg = TemplateFormDialog(name, TEMPLATES[name], fields, theme, self)
+            if dlg.exec() != QDialog.DialogCode.Accepted:
+                return
+            text = dlg.filled_text()
+        else:
+            text = TEMPLATES[name]
+        if self._editor.toPlainText().strip():
+            r = QMessageBox.question(
+                self, "Aplicar plantilla",
+                "¿Reemplazar el contenido actual?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            )
+            if r != QMessageBox.StandardButton.Yes:
+                return
+        self._editor.setPlainText(text)
+
     def _update_status(self):
         text = self._editor.toPlainText()
         words = len([w for w in text.split() if w.strip()])
         chars = len(text)
-        self._counter_lbl.setText(f"{words} palabras · {chars} caracteres")
+        tokens = max(0, round(chars / 4))
+        self._counter_lbl.setText(f"{words} palabras · {chars} caracteres · ~{tokens} tokens")
         n_pdfs = len(self._pdf_tray._pdfs)
         if self._running:
             status = f"● Ejecutando…  ·  Modo Local  ·  {words} palabras  ·  {n_pdfs} documentos"
