@@ -1,79 +1,155 @@
-# Sistema de Diagnóstico Legal (ISSBC – Parcial)
+# ISSBC – Diagnóstico Legal Asistido por IA
 
-> Nota: Esta entrega se centra en la **vista (UI)** como parte del examen de la asignatura ISSBC. La lógica de negocio está simulada y pendiente de completar.
+Aplicación de escritorio para análisis y diagnóstico de casos legales mediante un LLM local (Ollama). Arquitectura MVC con PyQt6.
 
-## Cómo usar la app
+---
 
-1) Arranque  
-   - Activa la venv (`.venv`) y ejecuta `python main.py`. La ventana se abre maximizada.
+## Características
 
-2) Tema y estado  
-   - Puedes alternar entre modo claro/oscuro. La barra de estado indica "Modo Local activo".
+### Análisis legal
+- Genera hipótesis legales ordenadas por probabilidad a partir del resumen del caso
+- Diagnóstico con título, nivel de gravedad, resumen, justificación estructurada y referencias legales aplicables
+- Nivel de detalle seleccionable: **Rápido**, **Estándar** o **Exhaustivo**
+- Modo revisión: resalta en el editor las frases clave del diagnóstico
+- Referencias legales reales con acceso directo a búsqueda en el BOE
 
-3) Resumen del caso  
-   - Escribe el contexto legal en el cuadro principal.  
-   - Usa la barra rápida: **Limpiar** (vacía el texto) y **Pegar** (desde portapapeles).  
-   - El contador muestra palabras y caracteres; el focus resalta el borde.
+### Chat
+- Conversación libre con el LLM en contexto del caso
+- Streaming token a token con burbuja de escritura animada
+- Soporte Markdown básico en las burbujas
+- Timestamps y botón de copiar en cada mensaje
+- Botón para regenerar el último análisis
 
-4) Gestión de PDFs  
-   - Haz clic en **Gestionar PDFs**. Se abre la vista de documentos anexos (maximizada).  
-   - **Añadir PDFs**: selecciona archivos; se muestran en la lista con icono.  
-   - Selecciona un PDF para ver la preview con scroll.  
-   - Navegación: botones ◀/▶ para páginas; overlay muestra "archivo • página X/Y".  
-   - Zoom: botones +/– (barra y flotantes) escalan la preview.  
-   - Si no hay PDFs, verás un estado de bienvenida con instrucciones.
+### Editor del caso
+- Corrector ortográfico en español con sugerencias en el menú contextual y diccionario personal
+- Contador de tokens estimado en tiempo real
+- Plantillas predefinidas (despido, arrendamiento, contrato mercantil, etc.)
+- Autoguardado del borrador cada 30 segundos
+- Título del caso editable con generación automática vía LLM
 
-5) Hipótesis, justificación y diagnóstico  
-   - Botones dedicados para mostrar resultados simulados en ventanas modales.  
-   - La ventana de diagnóstico incluye un badge de severidad (placeholder).
+### Gestión de conversaciones
+- Sidebar con lista de casos ordenados por fecha de modificación
+- Cargar, eliminar y crear nuevos casos desde la barra lateral
+- Persistencia completa: chat, hipótesis, diagnóstico, PDFs asociados
 
-## Características de la UI
+### Documentos PDF
+- Visor integrado con paginación, zoom y overlay de página actual
+- Extracción de texto por página para incluir en el contexto del LLM (hasta 4 documentos)
+- Búsqueda de texto dentro del visor de PDFs
+- Vista de miniaturas en cuadrícula
+- Drag & drop de archivos en el panel
+- Barra de progreso al cargar documentos grandes
+- Estado vacío ilustrado cuando no hay documentos
 
-- Tema Solarized claro/oscuro, tipografía moderna, botones con hover/pressed/elevación.  
-- Estilos de focus mejorados, tooltips tematizados y barra de progreso decorativa bajo el header.  
-- Barra de estado informativa.  
-- Preview de PDFs con paginación, zoom, overlay informativo y estados vacíos amigables.  
-- Layout maximizado en todas las ventanas para aprovechar espacio.
+### Exportación
+- **PDF**: informe completo con hipótesis, justificación, citas y referencias legales
+- **Word (.docx)**: documento editable con mismo contenido
+- **CSV**: historial de conversación completo
+- **Email**: abre cliente de correo con el diagnóstico prellenado
+- **Imprimir**: diálogo de impresión del sistema (Ctrl+P)
 
-## Limitaciones actuales
+### Archivos de caso `.issbc`
+- Guarda y carga casos completos (chat, análisis, PDFs embebidos en base64) en un único archivo portátil
 
-- La lógica (LLM, evaluación real, diagnóstico) no está implementada; esta versión es principalmente la interfaz gráfica del parcial.
+### Configuración
+- Selector de modelo Ollama (descarga incluida desde la UI)
+- Prompt extra personalizable que se añade a todas las peticiones
+- Tamaño y familia de fuente globales (slider + selector)
 
-## Ejecución rápida
+### UX
+- Tema Solarized claro/oscuro
+- Animaciones de entrada en burbujas del chat
+- Notificación de sistema al completar el análisis (si la ventana está minimizada)
+- Tooltips con texto completo en campos truncados
+- Popup de atajos de teclado (Ctrl+?)
+- Gráfico de barras horizontal para hipótesis con indicador de confianza global
+
+---
+
+## Requisitos
+
+- Python 3.11+
+- [Ollama](https://ollama.com/) instalado y en ejecución con al menos un modelo descargado (por defecto `qwen2.5:7b`)
+
+### Dependencias Python
+
+```
+PyQt6
+PyMuPDF          # fitz — visor PDF y exportación
+pyspellchecker   # corrector ortográfico
+python-docx      # exportación Word
+ollama           # cliente Python de Ollama
+```
+
+---
+
+## Instalación
+
 ```bash
 python -m venv .venv
-./.venv/Scripts/activate  # Windows
-pip install PyQt6
+
+# Windows (PowerShell)
+.\.venv\Scripts\Activate.ps1
+
+# macOS / Linux
+source .venv/bin/activate
+
+pip install PyQt6 PyMuPDF pyspellchecker python-docx ollama
+```
+
+---
+
+## Ejecución
+
+```bash
 python main.py
 ```
 
-## Instalación paso a paso
+La ventana se abre maximizada. Asegúrate de que Ollama esté corriendo (`ollama serve`) antes de lanzar la app.
 
-### 1. Crear el entorno virtual
+---
 
-Abre la terminal en la carpeta raíz del proyecto y ejecuta:
-```bash
-python -m venv .venv
+## Estructura del proyecto
+
+```
+Parcial1/
+├── main.py                      # Punto de entrada (MVC wiring)
+├── model/
+│   └── model.py                 # Modelo de datos
+├── view/
+│   └── view.py                  # UI completa (PyQt6)
+├── controller/
+│   └── controller.py            # Lógica de la app, workers QThread
+└── services/
+    ├── llm_service.py           # Integración Ollama (hipótesis, diagnóstico, chat, título)
+    ├── pdf_service.py           # Carga y extracción de texto de PDFs
+    ├── export_service.py        # Exportación PDF / DOCX / CSV / email
+    ├── conversation_service.py  # Persistencia de conversaciones (~/.issbc/convs/)
+    └── settings_service.py      # Ajustes de usuario (~/.issbc/settings.json)
 ```
 
-### 2. Activar el entorno virtual
+---
 
-Ejecuta el comando correspondiente a tu sistema operativo:
+## Datos persistidos
 
-- **Windows (CMD):** `.venv\Scripts\activate`
-- **Windows (PowerShell):** `.\.venv\Scripts\Activate.ps1`
-- **macOS / Linux:** `source .venv/bin/activate`
+Todos los datos se guardan en `~/.issbc/`:
 
-### 3. Instalar las dependencias
+| Ruta | Contenido |
+|---|---|
+| `~/.issbc/convs/*.json` | Conversaciones (chat, hipótesis, diagnóstico, rutas PDF) |
+| `~/.issbc/settings.json` | Modelo, tamaño de fuente, prompt extra |
+| `~/.issbc/pdf_cache/` | PDFs extraídos de archivos `.issbc` |
 
-Instala la librería de la interfaz gráfica y el motor para leer los PDFs:
-```bash
-pip install PyQt6 PyMuPDF
-```
+---
 
-### 4. Ejecutar el programa
+## Atajos de teclado
 
-Lanza el archivo principal de la aplicación:
-```bash
-python main.py
-```
+| Atajo | Acción |
+|---|---|
+| `Ctrl+Enter` | Analizar caso |
+| `Ctrl+N` | Nuevo caso |
+| `Ctrl+S` | Guardar caso como `.issbc` |
+| `Ctrl+O` | Abrir caso `.issbc` |
+| `Ctrl+P` | Imprimir diagnóstico |
+| `Ctrl+,` | Abrir ajustes |
+| `Ctrl+?` | Mostrar todos los atajos |
