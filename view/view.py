@@ -94,6 +94,49 @@ class SpellEditor(QTextEdit):
             self._highlighter.rehighlight()
 
 
+from PyQt6.QtCore import QObject, QEvent as _QEvent
+
+class _DragFilter(QObject):
+    """Makes the command bar drag the window; double-click toggles maximize."""
+    def __init__(self, window):
+        super().__init__(window)
+        self._win = window
+        self._drag_start = None
+
+    def eventFilter(self, obj, event):
+        t = event.type()
+        if t == _QEvent.Type.MouseButtonPress and event.button() == Qt.MouseButton.LeftButton:
+            child = obj.childAt(event.pos())
+            if child is None or child is obj:
+                self._drag_start = event.globalPosition().toPoint() - self._win.frameGeometry().topLeft()
+                return True
+        elif t == _QEvent.Type.MouseMove and self._drag_start is not None:
+            if not self._win.isMaximized():
+                self._win.move(event.globalPosition().toPoint() - self._drag_start)
+            return True
+        elif t == _QEvent.Type.MouseButtonRelease:
+            self._drag_start = None
+        elif t == _QEvent.Type.MouseButtonDblClick:
+            child = obj.childAt(event.pos())
+            if child is None or child is obj:
+                self._win.showNormal() if self._win.isMaximized() else self._win.showMaximized()
+                return True
+        return super().eventFilter(obj, event)
+
+
+class _ComboPopupFilter(QObject):
+    """Makes the entire QComboBox line-edit area open the popup on click."""
+    def __init__(self, combo):
+        super().__init__(combo)
+        self._combo = combo
+
+    def eventFilter(self, obj, event):
+        if event.type() == _QEvent.Type.MouseButtonPress:
+            self._combo.showPopup()
+            return True
+        return super().eventFilter(obj, event)
+
+
 # ── Color tokens (cool neutral SaaS) ─────────────────────────────────────────
 
 LIGHT_THEME = {
@@ -419,13 +462,30 @@ def get_stylesheet(theme, font_size: int = 13):
             border: 1px solid {theme['border']};
             border-radius: 7px;
             padding: 5px 10px;
-            font-weight: 500;
+            font-family: 'JetBrains Mono', 'Cascadia Mono', 'Consolas', monospace;
+            font-weight: 700;
         }}
         QPushButton:hover {{
             border-color: {theme['border_strong']};
             background-color: {theme['surface2']};
         }}
         QPushButton:pressed {{ background-color: {theme['surface2']}; }}
+        QPushButton#wc_btn {{
+            background: transparent; border: none; border-radius: 0;
+            color: {theme['text_subtle']}; font-size: 15px; font-weight: 300;
+            font-family: 'Segoe UI Symbol', 'Segoe UI', system-ui;
+        }}
+        QPushButton#wc_btn:hover {{
+            background: {theme['surface2']}; color: {theme['text']};
+        }}
+        QPushButton#wc_close {{
+            background: transparent; border: none; border-radius: 0;
+            color: {theme['text_subtle']}; font-size: 15px; font-weight: 300;
+            font-family: 'Segoe UI Symbol', 'Segoe UI', system-ui;
+        }}
+        QPushButton#wc_close:hover {{
+            background: #c42b1c; color: white;
+        }}
         QPushButton:disabled {{ color: {theme['text_subtle']}; }}
         QPushButton#primary {{
             background-color: {theme['accent']};
@@ -816,6 +876,48 @@ class CitationRow(QFrame):
             page_lbl.setFixedWidth(28)
             lay.addWidget(page_lbl)
 
+class LegalRefRow(QFrame):
+    """Clickable legal reference that opens BOE search."""
+
+    def __init__(self, ref_data, theme, parent=None):
+        super().__init__(parent)
+        lay = QHBoxLayout(self)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(6)
+
+        ref_text = ref_data.get("ref", "")
+        law_text = ref_data.get("law", "")
+
+        ref_lbl = QLabel(ref_text)
+        ref_lbl.setStyleSheet(
+            f"font-size: 11px; font-weight: 600; color: {theme['accent_text']};"
+            f" background: {theme['accent_soft']}; border-radius: 4px; padding: 1px 6px;"
+        )
+        ref_lbl.setFixedHeight(20)
+        lay.addWidget(ref_lbl)
+
+        law_lbl = ElidedLabel(law_text)
+        law_lbl.setStyleSheet(f"font-size: 11px; color: {theme['text_subtle']}; background: transparent;")
+        law_lbl.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        law_lbl.setMinimumWidth(0)
+        lay.addWidget(law_lbl, 1)
+
+        boe_btn = QPushButton("BOE")
+        boe_btn.setObjectName("ghost")
+        boe_btn.setFixedSize(36, 20)
+        boe_btn.setStyleSheet("font-size: 10px;")
+        import urllib.parse as _up
+        query = _up.quote(f"{ref_text} {law_text}")
+        boe_btn.setToolTip(f"Buscar en BOE: {ref_text}")
+        boe_btn.clicked.connect(lambda: self._open_boe(query))
+        lay.addWidget(boe_btn)
+
+    def _open_boe(self, query: str):
+        from PyQt6.QtGui import QDesktopServices
+        from PyQt6.QtCore import QUrl
+        QDesktopServices.openUrl(QUrl(f"https://www.boe.es/buscar/boe.php?q={query}"))
+
+
 class TimelineStep(QFrame):
     """Single step in the analysis timeline."""
 
@@ -1048,6 +1150,7 @@ class ResultsPane(QWidget):
         self._severity = ""
         self._on_justify = None
         self._on_export = None
+        self._on_review_mode = None
         self._diagnosis_data = {}
         self._hypotheses_data = []
 
@@ -1136,9 +1239,16 @@ class ResultsPane(QWidget):
         self._export_btn = QPushButton("Exportar")
         self._export_btn.setObjectName("ghost")
         self._export_btn.setFixedHeight(26)
+        self._review_btn = QPushButton("Revisión")
+        self._review_btn.setObjectName("ghost")
+        self._review_btn.setFixedHeight(26)
+        self._review_btn.setCheckable(True)
+        self._review_btn.setToolTip("Resaltar en el editor el texto que el modelo usó para el análisis")
+        self._review_btn.clicked.connect(self._on_review_clicked)
         btn_row.addWidget(self._just_btn)
         btn_row.addWidget(self._copy_diag_btn)
         btn_row.addWidget(self._export_btn)
+        btn_row.addWidget(self._review_btn)
         btn_row.addStretch()
         sh_lay.addLayout(btn_row)
         lay.addWidget(self._severity_header)
@@ -1180,6 +1290,22 @@ class ResultsPane(QWidget):
         self._cit_rows_lay.setSpacing(5)
         cit_lay.addLayout(self._cit_rows_lay)
         lay.addWidget(self._cit_section)
+
+        # Legal references section
+        self._refs_section = QFrame()
+        refs_lay = QVBoxLayout(self._refs_section)
+        refs_lay.setContentsMargins(16, 4, 16, 14)
+        refs_lay.setSpacing(5)
+        self._refs_header = QLabel("REFERENCIAS LEGALES")
+        self._refs_header.setObjectName("mono")
+        refs_lay.addWidget(self._refs_header)
+        self._refs_placeholder = QLabel("—")
+        self._refs_placeholder.setStyleSheet(f"color: {t['text_subtle']}; font-size: 12px;")
+        refs_lay.addWidget(self._refs_placeholder)
+        self._refs_rows_lay = QVBoxLayout()
+        self._refs_rows_lay.setSpacing(4)
+        refs_lay.addLayout(self._refs_rows_lay)
+        lay.addWidget(self._refs_section)
         lay.addStretch()
 
     def set_pdf_count(self, n: int):
@@ -1282,6 +1408,29 @@ class ResultsPane(QWidget):
                 self._cit_rows_lay.addWidget(row)
         else:
             self._cit_placeholder.show()
+
+        legal_refs = diagnosis_data.get("legal_refs", [])
+        while self._refs_rows_lay.count():
+            item = self._refs_rows_lay.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+        if legal_refs:
+            self._refs_placeholder.hide()
+            self._refs_header.setText(f"REFERENCIAS LEGALES · {len(legal_refs)}")
+            for lr in legal_refs:
+                row = LegalRefRow(lr, t)
+                self._refs_rows_lay.addWidget(row)
+        else:
+            self._refs_placeholder.show()
+
+        self._review_btn.setChecked(False)
+
+    def set_on_review_mode(self, cb):
+        self._on_review_mode = cb
+
+    def _on_review_clicked(self, checked: bool):
+        if self._on_review_mode:
+            self._on_review_mode(checked)
 
 
 class ProcessingWidget(QFrame):
@@ -1790,6 +1939,22 @@ class PDFWindow(QDialog):
         self.splitter.setSizes([240, 900])
         lay.addWidget(self.splitter)
 
+        # PDF text search bar
+        search_row = QHBoxLayout()
+        search_row.setContentsMargins(0, 0, 0, 0)
+        self._pdf_search = QLineEdit()
+        self._pdf_search.setPlaceholderText("Buscar texto en PDFs…")
+        self._pdf_search.setFixedHeight(30)
+        self._pdf_search.setClearButtonEnabled(True)
+        self._pdf_search.textChanged.connect(self._on_pdf_search_changed)
+        search_row.addWidget(self._pdf_search)
+        self._search_results_lbl = QLabel()
+        self._search_results_lbl.setObjectName("mono")
+        self._search_results_lbl.setStyleSheet("font-size: 11px;")
+        self._search_results_lbl.hide()
+        search_row.addWidget(self._search_results_lbl)
+        lay.addLayout(search_row)
+
         nav = QHBoxLayout()
         self.prev_btn = QPushButton("◀")
         self.next_btn = QPushButton("▶")
@@ -1817,6 +1982,8 @@ class PDFWindow(QDialog):
         nav.addWidget(self.grid_btn)
         lay.addLayout(nav)
         self._grid_mode = False
+        self._pdfs_data = []
+        self._search_hits = []
 
         btns = QHBoxLayout()
         self.add_btn = QPushButton("Añadir PDFs")
@@ -1908,6 +2075,8 @@ class PDFWindow(QDialog):
         self.setStyleSheet(get_stylesheet(DARK_THEME if is_dark else LIGHT_THEME))
 
     def update_data(self, pdfs):
+        self._pdfs_data = pdfs or []
+        self._pdf_search.clear()
         self.list_widget.clear()
         if not pdfs:
             item = QListWidgetItem("No hay PDFs aún.")
@@ -1916,18 +2085,93 @@ class PDFWindow(QDialog):
             self.preview_placeholder.setText("Añade PDFs para comenzar.")
             self.preview_stack.setCurrentWidget(self.preview_placeholder)
             return
+        self._populate_pdf_list(pdfs)
+        self.list_widget.setCurrentRow(0)
+        self.on_selection_changed()
+
+    def _populate_pdf_list(self, pdfs):
+        self.list_widget.clear()
         icon = build_pdf_icon()
         for pdf in pdfs:
             item = QListWidgetItem(icon, pdf.get("name", ""))
             item.setData(Qt.ItemDataRole.UserRole, pdf.get("path", ""))
             self.list_widget.addItem(item)
-        self.list_widget.setCurrentRow(0)
-        self.on_selection_changed()
+
+    def _on_pdf_search_changed(self, query: str):
+        query = query.strip().lower()
+        if not query:
+            self._search_results_lbl.hide()
+            self._search_hits = []
+            self._populate_pdf_list(self._pdfs_data)
+            if self._pdfs_data:
+                self.list_widget.setCurrentRow(0)
+                self.on_selection_changed()
+            return
+        hits = []
+        for pdf in self._pdfs_data:
+            pages = pdf.get("text_by_page", [])
+            if not pages:
+                text = pdf.get("full_text", "")
+                pages = [text] if text else []
+            for page_idx, page_text in enumerate(pages):
+                if query in page_text.lower():
+                    start = page_text.lower().find(query)
+                    snippet_start = max(0, start - 40)
+                    snippet = page_text[snippet_start:start + len(query) + 60].strip()
+                    snippet = snippet.replace("\n", " ")
+                    hits.append({
+                        "pdf_name": pdf.get("name", ""),
+                        "pdf_path": pdf.get("path", ""),
+                        "page": page_idx,
+                        "snippet": snippet,
+                    })
+        self._search_hits = hits
+        self.list_widget.clear()
+        if hits:
+            self._search_results_lbl.setText(f"{len(hits)} resultado{'s' if len(hits) != 1 else ''}")
+            self._search_results_lbl.show()
+            for h in hits[:50]:
+                label = f"[p.{h['page'] + 1}] {h['pdf_name']} — {h['snippet'][:60]}…"
+                item = QListWidgetItem(label)
+                item.setData(Qt.ItemDataRole.UserRole, h["pdf_path"])
+                item.setData(Qt.ItemDataRole.UserRole + 1, h["page"])
+                self.list_widget.addItem(item)
+            self.list_widget.setCurrentRow(0)
+            self._jump_to_search_hit(0)
+        else:
+            self._search_results_lbl.setText("Sin resultados")
+            self._search_results_lbl.show()
+
+    def _jump_to_search_hit(self, list_row: int):
+        item = self.list_widget.item(list_row)
+        if not item:
+            return
+        path = item.data(Qt.ItemDataRole.UserRole)
+        page = item.data(Qt.ItemDataRole.UserRole + 1)
+        if path is None:
+            return
+        try:
+            doc = fitz.open(path)
+            count = doc.page_count
+            doc.close()
+        except Exception:
+            return
+        self.current_pdf_path = path
+        self.current_page_count = count
+        self.current_page = page if page is not None else 0
+        self.current_file_name = path.replace("\\", "/").split("/")[-1]
+        self.zoom_factor = 1.0
+        self.render_page(self.current_page)
 
     def on_selection_changed(self):
         sel = self.list_widget.selectedItems()
         if not sel:
             self.preview_stack.setCurrentWidget(self.preview_placeholder)
+            return
+        # In search mode, each item already carries the page index
+        page_override = sel[0].data(Qt.ItemDataRole.UserRole + 1)
+        if page_override is not None and self._pdf_search.text().strip():
+            self._jump_to_search_hit(self.list_widget.row(sel[0]))
             return
         path = sel[0].data(Qt.ItemDataRole.UserRole)
         if not path or not PDF_PREVIEW_AVAILABLE:
@@ -2169,7 +2413,11 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.setWindowTitle("Diagnóstico legal · ISSBC")
         self.setMinimumSize(1000, 640)
+        self.setWindowFlag(Qt.WindowType.FramelessWindowHint)
         self.setWindowState(Qt.WindowState.WindowMaximized)
+        self._resize_dir = None
+        self._resize_start_pos = None
+        self._resize_start_geom = None
 
         self.is_dark_mode = False
         self._pdf_add_callback = None
@@ -2190,26 +2438,19 @@ class MainWindow(QMainWindow):
         self._cmd_bar.setObjectName("command_bar")
         self._cmd_bar.setFixedHeight(56)
         cmd_lay = QHBoxLayout(self._cmd_bar)
-        cmd_lay.setContentsMargins(16, 0, 16, 0)
+        cmd_lay.setContentsMargins(16, 0, 0, 0)
         cmd_lay.setSpacing(6)
 
         # Editable title inline with date
         self._title_edit = QLineEdit("Caso sin título")
         self._title_edit.setStyleSheet(
-            "QLineEdit { font-size: 13px; font-weight: 700; border: none;"
+            "QLineEdit { font-size: 16px; font-weight: 700; border: none;"
             " background: transparent; padding: 0 4px; }"
             "QLineEdit:focus { border-bottom: 1px solid palette(highlight); }"
         )
-        self._title_edit.setFixedHeight(34)
-        self._title_edit.setFixedWidth(300)
+        self._title_edit.setFixedHeight(40)
+        self._title_edit.setFixedWidth(380)
         cmd_lay.addWidget(self._title_edit)
-
-        today = _date.today()
-        months = ["ene","feb","mar","abr","may","jun","jul","ago","sep","oct","nov","dic"]
-        date_str = f"{today.day} {months[today.month - 1]} {today.year}"
-        self._case_id_lbl = QLabel(date_str)
-        self._case_id_lbl.setObjectName("mono")
-        cmd_lay.addWidget(self._case_id_lbl)
 
         # Search bar takes remaining space
         self._search_bar = QLineEdit()
@@ -2252,11 +2493,47 @@ class MainWindow(QMainWindow):
         divider.setStyleSheet("color: #e4e7eb;")
         cmd_lay.addWidget(divider)
 
+        # Detail level selector
+        from PyQt6.QtWidgets import QComboBox as _QComboBox2
+        self._detail_level = 1  # 0=Rápido, 1=Estándar, 2=Exhaustivo
+        self._detail_combo = _QComboBox2()
+        self._detail_combo.addItems(["Rápido", "Estándar", "Exhaustivo"])
+        self._detail_combo.setCurrentIndex(1)
+        self._detail_combo.setFixedHeight(34)
+        self._detail_combo.setFixedWidth(110)
+        self._detail_combo.setToolTip("Nivel de detalle del análisis")
+        self._detail_combo.setEditable(True)
+        self._detail_combo.lineEdit().setReadOnly(True)
+        self._detail_combo.lineEdit().setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._detail_combo_filter = _ComboPopupFilter(self._detail_combo)
+        self._detail_combo.lineEdit().installEventFilter(self._detail_combo_filter)
+        self._detail_combo.currentIndexChanged.connect(self._set_detail_level)
+        cmd_lay.addWidget(self._detail_combo)
+
         self._diag_btn = QPushButton("▶  Analizar")
         self._diag_btn.setObjectName("primary")
         self._diag_btn.setFixedSize(110, 34)
         self._diag_btn.setToolTip("Analizar caso  (Ctrl+Enter)")
         cmd_lay.addWidget(self._diag_btn)
+
+        # Window controls (frameless)
+        cmd_lay.addSpacing(16)
+        self._wc_min = QPushButton("⎯")
+        self._wc_max = QPushButton("⬜")
+        self._wc_close = QPushButton("✕")
+        for btn in (self._wc_min, self._wc_max, self._wc_close):
+            btn.setFixedSize(46, 56)
+            btn.setObjectName("wc_btn")
+        self._wc_min.clicked.connect(self.showMinimized)
+        self._wc_max.clicked.connect(self._toggle_maximize)
+        self._wc_close.clicked.connect(self.close)
+        self._wc_close.setObjectName("wc_close")
+        cmd_lay.addWidget(self._wc_min)
+        cmd_lay.addWidget(self._wc_max)
+        cmd_lay.addWidget(self._wc_close)
+
+        self._drag_filter = _DragFilter(self)
+        self._cmd_bar.installEventFilter(self._drag_filter)
 
         root_lay.addWidget(self._cmd_bar)
 
@@ -2412,6 +2689,12 @@ class MainWindow(QMainWindow):
         # Status bar
         self._status = self.statusBar()
         self._status.showMessage("● Listo · Modo Local · 0 palabras · 0 documentos")
+        today = _date.today()
+        _months = ["ene","feb","mar","abr","may","jun","jul","ago","sep","oct","nov","dic"]
+        _date_lbl = QLabel(f"{today.day} {_months[today.month - 1]} {today.year}")
+        _date_lbl.setObjectName("mono")
+        _date_lbl.setStyleSheet("font-size: 11px; padding-right: 6px;")
+        self._status.addPermanentWidget(_date_lbl)
 
         # Micro-UX
         self._clear_btn.clicked.connect(self._editor.clear)
@@ -2438,8 +2721,9 @@ class MainWindow(QMainWindow):
 
     def apply_theme(self):
         from services.settings_service import load_settings
+        s = load_settings()
         theme = DARK_THEME if self.is_dark_mode else LIGHT_THEME
-        font_size = load_settings().get("font_size", 13)
+        font_size = s.get("font_size", 13)
         self.setStyleSheet(get_stylesheet(theme, font_size))
         self._theme_btn.setText("○" if self.is_dark_mode else "◑")
         if self.is_dark_mode:
@@ -2455,10 +2739,85 @@ class MainWindow(QMainWindow):
         self._pdf_tray.update_theme(theme)
         if self._pw:
             self._pw.update_theme(self.is_dark_mode)
+        c = theme["text_muted"]
+        self._detail_combo.setStyleSheet(
+            f"QComboBox {{ font-family: 'JetBrains Mono', 'Cascadia Mono', 'Consolas', monospace;"
+            f" background: transparent; border: none; color: {c}; padding: 0 4px; }}"
+            f"QComboBox::drop-down {{ border: none; }}"
+            f"QComboBox QLineEdit {{ background: transparent; border: none; color: {c}; }}"
+        )
 
     def toggle_theme(self):
         self.is_dark_mode = not self.is_dark_mode
         self.apply_theme()
+
+    def _toggle_maximize(self):
+        if self.isMaximized():
+            self.showNormal()
+            self._wc_max.setText("□")
+        else:
+            self.showMaximized()
+            self._wc_max.setText("❐")
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton and not self.isMaximized():
+            self._resize_dir = self._get_resize_dir(event.pos())
+            if self._resize_dir:
+                self._resize_start_pos = event.globalPosition().toPoint()
+                self._resize_start_geom = self.geometry()
+                event.accept()
+                return
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        if self._resize_dir and self._resize_start_pos and not self.isMaximized():
+            delta = event.globalPosition().toPoint() - self._resize_start_pos
+            g = self._resize_start_geom
+            x, y, w, h = g.x(), g.y(), g.width(), g.height()
+            d = self._resize_dir
+            if 'l' in d:
+                x += delta.x(); w -= delta.x()
+            if 'r' in d:
+                w += delta.x()
+            if 't' in d:
+                y += delta.y(); h -= delta.y()
+            if 'b' in d:
+                h += delta.y()
+            if w >= self.minimumWidth() and h >= self.minimumHeight():
+                self.setGeometry(x, y, w, h)
+            event.accept()
+            return
+        if not self.isMaximized():
+            d = self._get_resize_dir(event.pos())
+            cursors = {
+                'l': Qt.CursorShape.SizeHorCursor, 'r': Qt.CursorShape.SizeHorCursor,
+                't': Qt.CursorShape.SizeVerCursor, 'b': Qt.CursorShape.SizeVerCursor,
+                'tl': Qt.CursorShape.SizeFDiagCursor, 'br': Qt.CursorShape.SizeFDiagCursor,
+                'tr': Qt.CursorShape.SizeBDiagCursor, 'bl': Qt.CursorShape.SizeBDiagCursor,
+            }
+            self.setCursor(cursors.get(d, Qt.CursorShape.ArrowCursor))
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        self._resize_dir = None
+        self._resize_start_pos = None
+        self._resize_start_geom = None
+        self.setCursor(Qt.CursorShape.ArrowCursor)
+        super().mouseReleaseEvent(event)
+
+    def _get_resize_dir(self, pos):
+        m = 6
+        x, y, w, h = pos.x(), pos.y(), self.width(), self.height()
+        l, r, t, b = x < m, x > w - m, y < m, y > h - m
+        if l and t: return 'tl'
+        if r and t: return 'tr'
+        if l and b: return 'bl'
+        if r and b: return 'br'
+        if l: return 'l'
+        if r: return 'r'
+        if t: return 't'
+        if b: return 'b'
+        return None
 
         # System tray for background notifications
         self._sys_tray = QSystemTrayIcon(self)
@@ -2541,6 +2900,8 @@ class MainWindow(QMainWindow):
         font_widget = QWidget()
         font_widget.setLayout(font_row)
         form.addRow(QLabel("Tamaño de fuente"), font_widget)
+
+
 
         # Extra prompt
         extra_edit = _QTextEdit()
@@ -2901,6 +3262,41 @@ class MainWindow(QMainWindow):
     def on_justify_clicked(self, callback):
         self._results.set_on_justify(callback)
 
+    def on_review_mode(self, callback):
+        self._results.set_on_review_mode(callback)
+
+    def set_review_highlights(self, phrases: list):
+        from PyQt6.QtGui import QTextCharFormat, QColor
+        from PyQt6.QtWidgets import QTextEdit
+        editor = self._editor
+        if not phrases:
+            editor.setExtraSelections([])
+            return
+        fmt = QTextCharFormat()
+        fmt.setBackground(QColor("#fef08a"))
+        doc = editor.document()
+        full_text = doc.toPlainText()
+        selections = []
+        for phrase in phrases:
+            if not phrase or len(phrase) < 4:
+                continue
+            start = 0
+            lower_text = full_text.lower()
+            lower_phrase = phrase.lower()
+            while True:
+                idx = lower_text.find(lower_phrase, start)
+                if idx == -1:
+                    break
+                cursor = editor.textCursor()
+                cursor.setPosition(idx)
+                cursor.setPosition(idx + len(phrase), cursor.MoveMode.KeepAnchor)
+                sel = QTextEdit.ExtraSelection()
+                sel.cursor = cursor
+                sel.format = fmt
+                selections.append(sel)
+                start = idx + 1
+        editor.setExtraSelections(selections)
+
     def on_pdf_clicked(self, callback):
         # Gestionar PDFs: in V3 the tray is always visible; wire to opening the detail viewer
         pass  # no dedicated button; double-click in tray opens the viewer
@@ -3071,6 +3467,12 @@ class MainWindow(QMainWindow):
         bar.setRange(0, total)
         bar.setValue(current)
         bar.show()
+
+    def _set_detail_level(self, level: int):
+        self._detail_level = level
+
+    def get_detail_level(self) -> int:
+        return self._detail_combo.currentIndex()
 
     def get_case_title(self) -> str:
         return self._title_edit.text().strip() or "Caso sin título"

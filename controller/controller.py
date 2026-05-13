@@ -88,6 +88,7 @@ class Controller(QObject):
         self.view.on_conv_selected(self.load_conversation)
         self.view.on_conv_deleted(self.delete_conversation)
         self.view.on_title_changed(self._on_title_changed)
+        self.view.on_review_mode(self._toggle_review_mode)
     # ── Session / conversations ───────────────────────────────
 
     def _restore_session(self):
@@ -220,13 +221,17 @@ class Controller(QObject):
         symptoms = list(self.model.symptoms)
         mode = self.model.mode
         pdfs = list(self.model.pdfs)
+        detail_level = self.view.get_detail_level()
         def _run(emit):
             import types
             emit("analyze", "Identificando hipótesis…")
-            hyps = self.llm.get_hypotheses({"symptoms": symptoms, "mode": mode, "pdfs": pdfs})
+            hyps = self.llm.get_hypotheses(
+                {"symptoms": symptoms, "mode": mode, "pdfs": pdfs},
+                detail_level=detail_level,
+            )
             emit("analyze", "Generando diagnóstico…")
             ctx = types.SimpleNamespace(symptoms=symptoms, hypotheses=hyps, pdfs=pdfs)
-            diag = self.llm.get_diagnosis(ctx)
+            diag = self.llm.get_diagnosis(ctx, detail_level=detail_level)
             return hyps, diag
 
         self._run_worker("analyze", _run)
@@ -563,3 +568,33 @@ class Controller(QObject):
 
     def open_pdf_manager(self):
         self.view.show_pdf_window(self.model.pdfs)
+
+    def _toggle_review_mode(self, active: bool):
+        if not active:
+            self.view.set_review_highlights([])
+            return
+        if not self.model.diagnosis and not self.model.justification:
+            self.view.set_review_highlights([])
+            return
+        phrases = []
+        just = self.model.justification
+        if isinstance(just, list):
+            for block in just:
+                body = block.get("body", "") if isinstance(block, dict) else str(block)
+                for sentence in body.replace(".", ". ").split(". "):
+                    sentence = sentence.strip()
+                    if len(sentence) > 15:
+                        phrases.append(sentence[:80])
+        elif isinstance(just, str):
+            for sentence in just.replace(".", ". ").split(". "):
+                sentence = sentence.strip()
+                if len(sentence) > 15:
+                    phrases.append(sentence[:80])
+        diag = self.model.diagnosis
+        if diag:
+            summary = diag.get("summary", "")
+            for sentence in summary.replace(".", ". ").split(". "):
+                sentence = sentence.strip()
+                if len(sentence) > 15:
+                    phrases.append(sentence[:80])
+        self.view.set_review_highlights(phrases)

@@ -29,19 +29,38 @@ Rules:
 - Between 2 and 5 hypotheses, ordered by score descending
 - Reply ONLY with the JSON array"""
 
+_HYPO_DETAIL = [
+    # Rápido
+    "\nDetail level: CONCISE. Return exactly 2 hypotheses. Keep each 'detail' field under 20 words.",
+    # Estándar (default — no extra instruction)
+    "",
+    # Exhaustivo
+    "\nDetail level: EXHAUSTIVE. Return 4 to 5 hypotheses. Each 'detail' field must be 2-3 sentences with specific legal grounds.",
+]
+
 _DIAG_SYSTEM = """\
 You are a Spanish legal assistant. ALWAYS respond in Spanish. Never use Chinese or any other language.
 Analyze the case and return ONLY a valid JSON object, no extra text, no markdown code blocks.
 
 Exact format (nothing else):
-{"diagnosis":"título breve en español","severity":"high","summary":"resumen en 2-3 frases en español","justification":[{"heading":"Hechos relevantes","body":"..."},{"heading":"Marco normativo","body":"..."},{"heading":"Conclusión","body":"..."}],"citations":[{"doc":"nombre del archivo","page":1,"note":"referencia breve sin comillas"}]}
+{"diagnosis":"título breve en español","severity":"high","summary":"resumen en 2-3 frases en español","justification":[{"heading":"Hechos relevantes","body":"..."},{"heading":"Marco normativo","body":"..."},{"heading":"Conclusión","body":"..."}],"citations":[{"doc":"nombre del archivo","page":1,"note":"referencia breve sin comillas"}],"legal_refs":[{"ref":"Art. 50 ET","law":"Estatuto de los Trabajadores"}]}
 
 Rules:
 - ALL text fields MUST be in Spanish
 - severity: exactly "high", "medium" or "low"
 - justification: 3 to 5 sections with heading and body
 - citations: for EACH document referenced, include its filename, the page number, and a short note (max 80 chars, NO quotes inside). Empty array only if no documents were provided.
+- legal_refs: 2 to 4 specific legal references (articles, laws, royal decrees) directly applicable to the case. Each "ref" is short (e.g. "Art. 50.1 ET"), "law" is the full law name in Spanish. Never invent references.
 - Reply ONLY with the JSON object"""
+
+_DIAG_DETAIL = [
+    # Rápido
+    "\nDetail level: CONCISE. Keep summary to 1-2 sentences. Provide exactly 3 justification sections with brief bodies (1-2 sentences each).",
+    # Estándar (default — no extra instruction)
+    "",
+    # Exhaustivo
+    "\nDetail level: EXHAUSTIVE. Provide 4-5 justification sections. Each body must be detailed (3-5 sentences) with specific article references, case law, or statutory grounds where applicable. Summary should be 3-4 sentences.",
+]
 
 _CHAT_SYSTEM = """\
 You are a Spanish legal assistant. ALWAYS respond in Spanish. Never use Chinese or any other language.
@@ -155,15 +174,17 @@ def _parse_json(text: str):
 
 class LLMService:
 
-    def get_hypotheses(self, data: dict, on_token=None) -> list:
+    def get_hypotheses(self, data: dict, on_token=None, detail_level: int = 1) -> list:
         case_text = "\n".join(data.get("symptoms", []))
         if not case_text.strip():
             return []
         pdf_ctx = _build_pdf_context(data.get("pdfs", []))
-        raw = _chat(_HYPO_SYSTEM, f"Caso:\n{case_text}{pdf_ctx}", on_token=on_token)
+        level = max(0, min(2, detail_level))
+        system = _HYPO_SYSTEM + _HYPO_DETAIL[level]
+        raw = _chat(system, f"Caso:\n{case_text}{pdf_ctx}", on_token=on_token)
         return _parse_json(raw)
 
-    def get_diagnosis(self, model, on_token=None) -> dict:
+    def get_diagnosis(self, model, on_token=None, detail_level: int = 1) -> dict:
         case_text = "\n".join(model.symptoms) if model.symptoms else ""
         hyp_block = ""
         if model.hypotheses:
@@ -173,7 +194,9 @@ class LLMService:
             ]
             hyp_block = "\n\nHipótesis previas:\n" + "\n".join(lines)
         pdf_ctx = _build_pdf_context(getattr(model, "pdfs", []))
-        raw = _chat(_DIAG_SYSTEM, f"Caso:\n{case_text}{hyp_block}{pdf_ctx}", on_token=on_token)
+        level = max(0, min(2, detail_level))
+        system = _DIAG_SYSTEM + _DIAG_DETAIL[level]
+        raw = _chat(system, f"Caso:\n{case_text}{hyp_block}{pdf_ctx}", on_token=on_token)
         return _parse_json(raw)
 
     def generate_title(self, first_message: str) -> str:
