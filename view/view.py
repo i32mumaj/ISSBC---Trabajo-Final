@@ -6,7 +6,7 @@ from PyQt6.QtWidgets import (
     QSystemTrayIcon, QStyle
 )
 from datetime import date as _date
-from PyQt6.QtCore import Qt, QTimer, QPropertyAnimation, QEasingCurve, QRect
+from PyQt6.QtCore import Qt, QTimer, QPropertyAnimation, QEasingCurve, QRect, QRectF, QPointF, QSize
 from PyQt6.QtGui import (
     QFont, QImage, QPixmap, QGuiApplication, QIcon, QPainter, QColor,
     QKeySequence, QPen, QPainterPath, QShortcut, QSyntaxHighlighter, QTextCharFormat
@@ -176,6 +176,67 @@ DARK_THEME = {
     "scrollbar_bg": "#0c1014",
     "scrollbar_handle": "#2e3744",
 }
+
+_TRAFFIC_COLORS = {
+    "close": ("#FF5F57", "#BF4942"),
+    "min":   ("#FFBD2E", "#BF8F22"),
+    "max":   ("#28C840", "#1E9630"),
+}
+_TRAFFIC_SYMBOL_COLOR = {
+    "close": "#4D0000",
+    "min":   "#5C3D00",
+    "max":   "#003314",
+}
+
+
+def _make_traffic_icon(kind: str, hovered: bool = False, size: int = 14) -> QIcon:
+    base, dark = _TRAFFIC_COLORS[kind]
+    fill = dark if hovered else base
+    scale = 2
+    c = size * scale
+    px = QPixmap(c, c)
+    px.fill(Qt.GlobalColor.transparent)
+    p = QPainter(px)
+    p.setRenderHint(QPainter.RenderHint.Antialiasing)
+    p.setBrush(QColor(fill))
+    p.setPen(Qt.PenStyle.NoPen)
+    p.drawEllipse(QRectF(0, 0, c, c))
+    if hovered:
+        pen = QPen(QColor(_TRAFFIC_SYMBOL_COLOR[kind]))
+        pen.setWidthF(1.7 * scale)
+        pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+        p.setPen(pen)
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        pad = c * 0.27
+        if kind == "close":
+            p.drawLine(QPointF(pad, pad), QPointF(c - pad, c - pad))
+            p.drawLine(QPointF(c - pad, pad), QPointF(pad, c - pad))
+        elif kind == "min":
+            p.drawLine(QPointF(pad, c / 2), QPointF(c - pad, c / 2))
+        elif kind == "max":
+            mid = c / 2
+            p.drawLine(QPointF(pad, mid), QPointF(c - pad, mid))
+            p.drawLine(QPointF(mid, pad), QPointF(mid, c - pad))
+    p.end()
+    px.setDevicePixelRatio(scale)
+    return QIcon(px)
+
+
+class _TrafficHoverFilter(QObject):
+    def __init__(self, btn, kind: str):
+        super().__init__(btn)
+        self._btn = btn
+        self._kind = kind
+
+    def eventFilter(self, obj, event):
+        from PyQt6.QtCore import QEvent
+        if obj is self._btn:
+            if event.type() == QEvent.Type.Enter:
+                self._btn.setIcon(_make_traffic_icon(self._kind, hovered=True))
+            elif event.type() == QEvent.Type.Leave:
+                self._btn.setIcon(_make_traffic_icon(self._kind, hovered=False))
+        return False
+
 
 TIMELINE_STEPS = [
     ("s1", "Resumen recibido"),
@@ -472,20 +533,12 @@ def get_stylesheet(theme, font_size: int = 13):
         QPushButton:pressed {{ background-color: {theme['surface2']}; }}
         QPushButton#wc_btn {{
             background: transparent; border: none; border-radius: 0;
-            color: {theme['text_subtle']}; font-size: 15px; font-weight: 300;
-            font-family: 'Segoe UI Symbol', 'Segoe UI', system-ui;
         }}
-        QPushButton#wc_btn:hover {{
-            background: {theme['surface2']}; color: {theme['text']};
-        }}
+        QPushButton#wc_btn:hover {{ background: transparent; }}
         QPushButton#wc_close {{
             background: transparent; border: none; border-radius: 0;
-            color: {theme['text_subtle']}; font-size: 15px; font-weight: 300;
-            font-family: 'Segoe UI Symbol', 'Segoe UI', system-ui;
         }}
-        QPushButton#wc_close:hover {{
-            background: #c42b1c; color: white;
-        }}
+        QPushButton#wc_close:hover {{ background: transparent; }}
         QPushButton:disabled {{ color: {theme['text_subtle']}; }}
         QPushButton#primary {{
             background-color: {theme['accent']};
@@ -877,16 +930,19 @@ class CitationRow(QFrame):
             lay.addWidget(page_lbl)
 
 class LegalRefRow(QFrame):
-    """Clickable legal reference that opens BOE search."""
+    """Clickable legal reference row — click anywhere to open BOE search."""
 
     def __init__(self, ref_data, theme, parent=None):
         super().__init__(parent)
         lay = QHBoxLayout(self)
-        lay.setContentsMargins(0, 0, 0, 0)
-        lay.setSpacing(6)
+        lay.setContentsMargins(0, 2, 0, 2)
+        lay.setSpacing(8)
 
         ref_text = ref_data.get("ref", "")
         law_text = ref_data.get("law", "")
+
+        import urllib.parse as _up
+        self._query = _up.quote(f"{ref_text} {law_text}")
 
         ref_lbl = QLabel(ref_text)
         ref_lbl.setStyleSheet(
@@ -902,20 +958,23 @@ class LegalRefRow(QFrame):
         law_lbl.setMinimumWidth(0)
         lay.addWidget(law_lbl, 1)
 
-        boe_btn = QPushButton("BOE")
-        boe_btn.setObjectName("ghost")
-        boe_btn.setFixedSize(36, 20)
-        boe_btn.setStyleSheet("font-size: 10px;")
-        import urllib.parse as _up
-        query = _up.quote(f"{ref_text} {law_text}")
-        boe_btn.setToolTip(f"Buscar en BOE: {ref_text}")
-        boe_btn.clicked.connect(lambda: self._open_boe(query))
-        lay.addWidget(boe_btn)
+        ext_lbl = QLabel("↗")
+        ext_lbl.setStyleSheet(f"font-size: 10px; color: {theme['text_subtle']}; background: transparent;")
+        lay.addWidget(ext_lbl)
 
-    def _open_boe(self, query: str):
-        from PyQt6.QtGui import QDesktopServices
-        from PyQt6.QtCore import QUrl
-        QDesktopServices.openUrl(QUrl(f"https://www.boe.es/buscar/boe.php?q={query}"))
+        self.setToolTip(f"Buscar en BOE: {ref_text} — {law_text}")
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setStyleSheet(
+            f"LegalRefRow {{ border-radius: 4px; }}"
+            f"LegalRefRow:hover {{ background: {theme['surface2']}; }}"
+        )
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            from PyQt6.QtGui import QDesktopServices
+            from PyQt6.QtCore import QUrl
+            QDesktopServices.openUrl(QUrl(f"https://www.boe.es/buscar/boe.php?q={self._query}"))
+        super().mousePressEvent(event)
 
 
 class TimelineStep(QFrame):
@@ -2518,12 +2577,16 @@ class MainWindow(QMainWindow):
 
         # Window controls (frameless)
         cmd_lay.addSpacing(16)
-        self._wc_min = QPushButton("⎯")
-        self._wc_max = QPushButton("⬜")
-        self._wc_close = QPushButton("✕")
+        self._wc_min = QPushButton()
+        self._wc_max = QPushButton()
+        self._wc_close = QPushButton()
         for btn in (self._wc_min, self._wc_max, self._wc_close):
             btn.setFixedSize(46, 56)
             btn.setObjectName("wc_btn")
+            btn.setIconSize(QSize(13, 13))
+        self._wc_min.setToolTip("Minimizar")
+        self._wc_max.setToolTip("Maximizar")
+        self._wc_close.setToolTip("Cerrar")
         self._wc_min.clicked.connect(self.showMinimized)
         self._wc_max.clicked.connect(self._toggle_maximize)
         self._wc_close.clicked.connect(self.close)
@@ -2734,6 +2797,7 @@ class MainWindow(QMainWindow):
         else:
             self._cmd_bar.setStyleSheet("")
         self._editor_sep.setStyleSheet(f"background-color: {theme['border']};")
+        self._update_wc_icons(theme)
         self._results.update_theme(theme)
         self._timeline.update_theme(theme)
         self._pdf_tray.update_theme(theme)
@@ -2747,6 +2811,14 @@ class MainWindow(QMainWindow):
             f"QComboBox QLineEdit {{ background: transparent; border: none; color: {c}; }}"
         )
 
+    def _update_wc_icons(self, theme: dict = None):
+        for btn, kind in ((self._wc_close, "close"), (self._wc_min, "min"), (self._wc_max, "max")):
+            btn.setIcon(_make_traffic_icon(kind, hovered=False))
+            if not hasattr(btn, "_traffic_filter"):
+                f = _TrafficHoverFilter(btn, kind)
+                btn.installEventFilter(f)
+                btn._traffic_filter = f
+
     def toggle_theme(self):
         self.is_dark_mode = not self.is_dark_mode
         self.apply_theme()
@@ -2754,10 +2826,10 @@ class MainWindow(QMainWindow):
     def _toggle_maximize(self):
         if self.isMaximized():
             self.showNormal()
-            self._wc_max.setText("□")
         else:
             self.showMaximized()
-            self._wc_max.setText("❐")
+        theme = DARK_THEME if self.is_dark_mode else LIGHT_THEME
+        self._update_wc_icons(theme)
 
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton and not self.isMaximized():

@@ -576,25 +576,35 @@ class Controller(QObject):
         if not self.model.diagnosis and not self.model.justification:
             self.view.set_review_highlights([])
             return
-        phrases = []
+        import re
+        # Build source text from diagnosis output
+        source = ""
         just = self.model.justification
         if isinstance(just, list):
             for block in just:
-                body = block.get("body", "") if isinstance(block, dict) else str(block)
-                for sentence in body.replace(".", ". ").split(". "):
-                    sentence = sentence.strip()
-                    if len(sentence) > 15:
-                        phrases.append(sentence[:80])
+                source += " " + (block.get("body", "") if isinstance(block, dict) else str(block))
         elif isinstance(just, str):
-            for sentence in just.replace(".", ". ").split(". "):
-                sentence = sentence.strip()
-                if len(sentence) > 15:
-                    phrases.append(sentence[:80])
+            source += " " + just
         diag = self.model.diagnosis
         if diag:
-            summary = diag.get("summary", "")
-            for sentence in summary.replace(".", ". ").split(". "):
-                sentence = sentence.strip()
-                if len(sentence) > 15:
-                    phrases.append(sentence[:80])
+            source += " " + diag.get("summary", "")
+            source += " " + diag.get("diagnosis", "")
+            for lr in diag.get("legal_refs", []):
+                source += " " + lr.get("ref", "") + " " + lr.get("law", "")
+
+        # Extract short verbatim fragments that are likely to appear in the editor too:
+        # dates, amounts, article refs, legal acronyms, and capitalized proper nouns
+        frags = set()
+        frags.update(re.findall(r'\b\d{1,2}[/\-\.]\d{1,2}[/\-\.]\d{2,4}\b', source))
+        frags.update(re.findall(
+            r'\b(?:enero|febrero|marzo|abril|mayo|junio|julio|agosto|'
+            r'septiembre|octubre|noviembre|diciembre)\s+(?:de\s+)?\d{4}\b', source, re.I))
+        frags.update(re.findall(r'\b\d{4}\b', source))
+        frags.update(re.findall(r'[\d.,]+\s*€', source))
+        frags.update(re.findall(r'[Aa]rt(?:ículo)?\.?\s*\d+[\w.,]*', source))
+        frags.update(re.findall(r'\b(?:ET|LGSS|LRJS|CC|RD|BOE|RDL|LET|LOPD|GDPR)\b', source))
+        frags.update(re.findall(
+            r'\b[A-ZÁÉÍÓÚÜÑ][a-záéíóúüñ]{2,}(?:\s+[A-ZÁÉÍÓÚÜÑ][a-záéíóúüñ]{2,})?\b', source))
+
+        phrases = [f.strip() for f in frags if f.strip() and len(f.strip()) >= 3]
         self.view.set_review_highlights(phrases)
