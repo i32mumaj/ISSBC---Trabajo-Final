@@ -2849,7 +2849,7 @@ class MainWindow(QMainWindow):
         from services.settings_service import load_settings, save_settings
         try:
             import ollama as _ollama
-            available_models = [m["model"] for m in _ollama.list().get("models", [])]
+            available_models = [m.model for m in _ollama.list().models]
         except Exception:
             available_models = []
 
@@ -2978,10 +2978,10 @@ class MainWindow(QMainWindow):
                 try:
                     import ollama as _ol
                     for chunk in _ol.pull(self._model, stream=True):
-                        status = chunk.get("status", "")
-                        completed = chunk.get("completed", 0)
-                        total = chunk.get("total", 0)
-                        self.progress.emit(status, completed, total)
+                        status = getattr(chunk, "status", "") or ""
+                        completed = getattr(chunk, "completed", 0) or 0
+                        total = getattr(chunk, "total", 0) or 0
+                        self.progress.emit(status, completed or 0, total or 0)
                     self.done.emit(True, "")
                 except Exception as exc:
                     self.done.emit(False, str(exc))
