@@ -118,6 +118,7 @@ class Controller(QObject):
         self.model.symptoms = []
         self._pending_name = None
         self._is_new_conv = False
+        self._typing_bubble = None
         self.view.clear_chat()
         self.view.clear_results()
         self.view.set_editor_text("")
@@ -158,6 +159,7 @@ class Controller(QObject):
         self.model.pdfs = []
         self._pending_name = name.strip() or "Sin título"
         self._auto_save()
+        self._typing_bubble = None
         self.view.clear_chat()
         self.view.clear_results()
         self.view.set_editor_text("")
@@ -191,6 +193,7 @@ class Controller(QObject):
 
         self._pending_name = data.get("name", "Caso sin título")
         self.view.set_case_title(self._pending_name)
+        self._typing_bubble = None
         self.view.clear_chat()
         for msg in self.model.chat_history:
             self.view.add_chat_message(msg["role"], msg["content"], timestamp=msg.get("timestamp", "—"))
@@ -250,8 +253,11 @@ class Controller(QObject):
         if kind == "analyze":
             self.view.set_processing_status(text)
         elif self._typing_bubble:
-            self._typing_bubble.set_content(text)
-            self._typing_bubble.repaint()
+            try:
+                self._typing_bubble.set_content(text)
+                self._typing_bubble.repaint()
+            except RuntimeError:
+                self._typing_bubble = None
 
     def _on_done(self, kind: str, result):
         try:
