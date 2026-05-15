@@ -579,11 +579,12 @@ class Controller(QObject):
         if not active:
             self.view.set_review_highlights([])
             return
-        if not self.model.diagnosis and not self.model.justification:
+        if not self.model.diagnosis:
             self.view.set_review_highlights([])
             return
         import re
-        # Build source text from diagnosis output
+
+        # Build the full analysis text to use as reference
         source = ""
         just = self.model.justification
         if isinstance(just, list):
@@ -592,25 +593,44 @@ class Controller(QObject):
         elif isinstance(just, str):
             source += " " + just
         diag = self.model.diagnosis
-        if diag:
-            source += " " + diag.get("summary", "")
-            source += " " + diag.get("diagnosis", "")
-            for lr in diag.get("legal_refs", []):
-                source += " " + lr.get("ref", "") + " " + lr.get("law", "")
+        source += " " + diag.get("summary", "")
+        source += " " + diag.get("diagnosis", "")
+        source_lower = source.lower()
 
-        # Extract short verbatim fragments that are likely to appear in the editor too:
-        # dates, amounts, article refs, legal acronyms, and capitalized proper nouns
-        frags = set()
-        frags.update(re.findall(r'\b\d{1,2}[/\-\.]\d{1,2}[/\-\.]\d{2,4}\b', source))
-        frags.update(re.findall(
+        # Editor text = the user's case description
+        editor_text = "\n".join(self.model.symptoms) if self.model.symptoms else ""
+        if not editor_text.strip():
+            self.view.set_review_highlights([])
+            return
+
+        _STOP = {
+            'aunque', 'siendo', 'según', 'dicho', 'dichos', 'también', 'cuando',
+            'donde', 'mismo', 'misma', 'mismos', 'mismas', 'tanto', 'toda', 'todos',
+            'todas', 'otro', 'otros', 'otras', 'entre', 'sobre', 'hasta', 'desde',
+            'contra', 'durante', 'mediante', 'puede', 'deben', 'tiene', 'tienen',
+            'hacer', 'haber', 'estar', 'podría', 'debería', 'deberá', 'tendrá',
+            'habrá', 'hecho', 'hechos', 'parte', 'partes', 'caso', 'casos',
+        }
+
+        phrases = []
+
+        # 1. Always highlight exact dates and amounts from the editor that appear in analysis
+        for pat in [
+            r'\b\d{1,2}[/\-\.]\d{1,2}[/\-\.]\d{2,4}\b',
             r'\b(?:enero|febrero|marzo|abril|mayo|junio|julio|agosto|'
-            r'septiembre|octubre|noviembre|diciembre)\s+(?:de\s+)?\d{4}\b', source, re.I))
-        frags.update(re.findall(r'\b\d{4}\b', source))
-        frags.update(re.findall(r'[\d.,]+\s*€', source))
-        frags.update(re.findall(r'[Aa]rt(?:ículo)?\.?\s*\d+[\w.,]*', source))
-        frags.update(re.findall(r'\b(?:ET|LGSS|LRJS|CC|RD|BOE|RDL|LET|LOPD|GDPR)\b', source))
-        frags.update(re.findall(
-            r'\b[A-ZÁÉÍÓÚÜÑ][a-záéíóúüñ]{2,}(?:\s+[A-ZÁÉÍÓÚÜÑ][a-záéíóúüñ]{2,})?\b', source))
+            r'septiembre|octubre|noviembre|diciembre)\s+(?:de\s+)?\d{4}\b',
+            r'[\d.,]+\s*€',
+            r'[Aa]rt(?:ículo)?\.?\s*\d+[\w.,]*',
+        ]:
+            for m in re.finditer(pat, editor_text, re.I):
+                frag = m.group().strip()
+                if frag.lower() in source_lower:
+                    phrases.append(frag)
 
-        phrases = [f.strip() for f in frags if f.strip() and len(f.strip()) >= 3]
-        self.view.set_review_highlights(phrases)
+        # 2. Extract significant words (≥7 chars) from editor that appear in the analysis
+        for word in re.findall(r'\b[a-záéíóúüñA-ZÁÉÍÓÚÜÑ]{7,}\b', editor_text):
+            w = word.lower()
+            if w not in _STOP and w in source_lower:
+                phrases.append(word)
+
+        self.view.set_review_highlights(list(set(phrases)))

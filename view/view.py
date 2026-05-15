@@ -942,7 +942,7 @@ class LegalRefRow(QFrame):
         law_text = ref_data.get("law", "")
 
         import urllib.parse as _up
-        self._query = _up.quote(f"{ref_text} {law_text}")
+        self._query = _up.quote(f"site:boe.es {ref_text} {law_text}")
 
         ref_lbl = QLabel(ref_text)
         ref_lbl.setStyleSheet(
@@ -973,7 +973,7 @@ class LegalRefRow(QFrame):
         if event.button() == Qt.MouseButton.LeftButton:
             from PyQt6.QtGui import QDesktopServices
             from PyQt6.QtCore import QUrl
-            QDesktopServices.openUrl(QUrl(f"https://www.boe.es/buscar/boe.php?q={self._query}"))
+            QDesktopServices.openUrl(QUrl(f"https://www.google.com/search?q={self._query}"))
         super().mousePressEvent(event)
 
 
